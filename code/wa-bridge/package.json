@@ -1,0 +1,21 @@
+{
+  "name": "wa-bridge",
+  "version": "0.1.0",
+  "description": "A local WhatsApp bridge for Claude Code: one linked device, a local message store, a token-protected localhost API, and a CLI. It never sends anything on its own.",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "bin": { "wa": "bin/wa.mjs" },
+  "scripts": {
+    "start": "node src/daemon.mjs",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-reporter=spec \"test/*.test.mjs\""
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc13",
+    "pino": "9.14.0",
+    "qrcode": "1.5.4"
+  },
+  "overrides": {
+    "protobufjs": "^7.5.5"
+  }
+}
