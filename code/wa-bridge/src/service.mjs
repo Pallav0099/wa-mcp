@@ -16,9 +16,9 @@ import { selfCommand } from './self.mjs';
 export const DAEMON_SCRIPT = fileURLToPath(new URL('./daemon.mjs', import.meta.url));
 export const UNIT_NAME = 'wa-bridge.service';
 
-/** Run a command quietly; { status, stdout, stderr }. Injectable for tests. */
-export function runQuiet(cmd, args) {
-  const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: 30_000 });
+/** Run a command quietly; { status, stdout, stderr }. `env` is passed through (agent CLIs read HOME etc.). */
+export function runQuiet(cmd, args, env = process.env) {
+  const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: 30_000, env });
   return { status: r.error ? -1 : r.status, stdout: r.stdout || '', stderr: r.stderr || (r.error ? r.error.message : '') };
 }
 

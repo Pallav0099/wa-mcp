@@ -1,8 +1,9 @@
 // `wa doctor`: check every moving part and say what to do about each problem. Never starts or changes anything.
 
 import { existsSync, statSync, realpathSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { connect } from 'node:net';
+import { which } from './agents/common.mjs';
 import { clientConfig, stoppedFlag } from '../client.mjs';
 import { ourDaemonAnswers } from '../lifecycle.mjs';
 import { launcherPath } from '../self.mjs';
@@ -11,15 +12,6 @@ import { formatTs, jidUser } from '../util.mjs';
 import { VERSION } from '../version.mjs';
 
 const MARK = { ok: '✓', warn: '!', fail: '✗', info: '·' };
-
-export function which(cmd, env = process.env) {
-  for (const dir of String(env.PATH || '').split(delimiter)) {
-    if (!dir) continue;
-    const p = join(dir, cmd);
-    try { if (statSync(p).isFile()) return p; } catch { /* not here */ }
-  }
-  return null;
-}
 
 function portInUse(port) {
   return new Promise((resolve) => {

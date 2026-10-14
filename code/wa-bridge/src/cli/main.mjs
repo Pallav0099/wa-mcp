@@ -31,6 +31,7 @@ export async function main(argv) {
     case 'restart': return (await import('./servicecmd.mjs')).restartCommand(pos, flags);
     case 'logs': return (await import('./servicecmd.mjs')).logsCommand(pos, flags);
     case 'doctor': return (await import('./doctor.mjs')).doctorCommand(pos, flags);
+    case 'agents': return (await import('./agents/index.mjs')).agentsCommand(pos, flags);
     case 'logout': // the original command name; keeps requiring --yes
       if (!flags.yes) throw usage('wa logout --yes   (this UNLINKS the bridge from the WhatsApp account)');
       return disconnect(flags);

@@ -39,11 +39,11 @@ export const DEFAULTS = Object.freeze({
   log: { level: 'info', baileysLevel: 'warn', keepDays: 30 },
 });
 
-export function defaultDataDir() {
-  if (process.env.WA_BRIDGE_HOME) return process.env.WA_BRIDGE_HOME;
-  if (process.platform === 'win32' && process.env.LOCALAPPDATA) return join(process.env.LOCALAPPDATA, 'wa-bridge');
-  const home = process.env.HOME || process.env.USERPROFILE || '.';
-  return join(process.env.XDG_DATA_HOME || join(home, '.local', 'share'), 'wa-bridge');
+export function defaultDataDir(env = process.env) {
+  if (env.WA_BRIDGE_HOME) return env.WA_BRIDGE_HOME;
+  if (process.platform === 'win32' && env.LOCALAPPDATA) return join(env.LOCALAPPDATA, 'wa-bridge');
+  const home = env.HOME || env.USERPROFILE || '.';
+  return join(env.XDG_DATA_HOME || join(home, '.local', 'share'), 'wa-bridge');
 }
 
 export function pathsFor(root) {
