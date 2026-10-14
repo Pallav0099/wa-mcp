@@ -122,6 +122,10 @@ store only, never `auth/` (relinking is cheap; restoring stale encryption sessio
 - The service runs while you are logged in. On a headless machine, keep it running without a login session with
   `loginctl enable-linger $USER`. `wa doctor` tells you when that is needed. Without systemd (containers, WSL
   without systemd) the daemon runs detached and needs `wa start` after a reboot.
+- `wa stop` means stopped until `wa start` or `wa connect`, also across logins and reboots. Agents' tool calls
+  will not start it again either.
+- A daemon that cannot start (for example a broken `config.json`) is retried 5 times and then left stopped.
+  `wa logs` shows why, and `wa start` tries again.
 - `wa update` verifies the release exactly like the installer, snapshots the store, switches, restarts and rolls
   back by itself if the daemon does not come back. `wa update --rollback` returns to the previous version.
 - `wa uninstall` removes the agents' entries and skills, the service, the PATH lines and `~/.wa-bridge`, and

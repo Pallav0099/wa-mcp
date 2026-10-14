@@ -12,7 +12,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
-import { cpSync, createReadStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, createReadStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -126,6 +126,23 @@ try {
 
   r = await sh();
   ok(r.status === 0 && (readFileSync(join(home, '.profile'), 'utf8').match(/>>> wa-bridge >>>/g) || []).length === 1, 're-running is a repair: no duplicate PATH lines');
+  rmSync(join(home, '.wa-bridge', '.wa-bridge-install')); // an install made before the marker existed
+  r = await sh();
+  ok(r.status === 0 && existsSync(join(home, '.wa-bridge', '.wa-bridge-install')), 'an install without the marker is still repaired (recognised by its launcher)');
+  const foreignRoot = join(home, 'not-ours');
+  mkdirSync(foreignRoot);
+  writeFileSync(join(foreignRoot, 'precious.txt'), 'x');
+  r = await sh({ WA_BRIDGE_INSTALL: foreignRoot });
+  ok(r.status !== 0 && /is not a wa-bridge install/.test(r.stderr) && readdirSync(foreignRoot).join() === 'precious.txt', 'a non-empty directory that is not a wa-bridge install is refused untouched');
+
+  // a read-only rc file (e.g. managed by home-manager) is warned about, never fatal
+  const home2 = join(work, 'home2');
+  mkdirSync(home2);
+  writeFileSync(join(home2, '.zshrc'), '# managed\n');
+  chmodSync(join(home2, '.zshrc'), 0o444);
+  r = await sh({ HOME: home2, SHELL: '/bin/zsh' });
+  ok(r.status === 0 && /could not add ~\/\.local\/bin to PATH in .*\.zshrc/.test(r.stderr) && !/PATH in:.*\.zshrc/.test(r.stdout), 'a read-only ~/.zshrc only warns, and is not reported as changed');
+  chmodSync(join(home2, '.zshrc'), 0o644);
 
   r = await sh({}, ['--version', '9.9.9']);
   ok(r.status !== 0 && /asked for 9\.9\.9/.test(r.stderr), 'a version that does not match the release is refused');

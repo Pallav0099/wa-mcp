@@ -70,7 +70,9 @@ export function unitInstalled(env = process.env) {
 /** Write (or refresh) the unit and enable it at login. Returns { path, changed }. */
 export function installUnit({ dataDir, command, run = runQuiet, env = process.env } = {}) {
   const path = unitPath(env);
-  const text = unitText({ command, dataDir });
+  // a port override survives refreshes made by processes that do not have WA_BRIDGE_PORT set
+  const existingPort = existsSync(path) ? /^Environment="?WA_BRIDGE_PORT=(\d+)"?$/m.exec(readFileSync(path, 'utf8'))?.[1] : undefined;
+  const text = unitText({ command, dataDir, port: env.WA_BRIDGE_PORT || existingPort });
   const changed = !existsSync(path) || readFileSync(path, 'utf8') !== text;
   if (changed) {
     mkdirSync(join(path, '..'), { recursive: true });
@@ -92,9 +94,17 @@ export function uninstallUnit({ run = runQuiet, env = process.env } = {}) {
   return true;
 }
 
-export const startUnit = (run = runQuiet) => must(run('systemctl', ['--user', 'start', UNIT_NAME]), `systemctl --user start ${UNIT_NAME}`);
+// An explicit start first clears a start-limit-hit / failed state: StartLimitBurst is meant to stop an endless
+// Restart= loop, not to refuse `wa start`, `wa restart`, an update or a rollback.
+export function startUnit(run = runQuiet) {
+  run('systemctl', ['--user', 'reset-failed', UNIT_NAME]);
+  return must(run('systemctl', ['--user', 'start', UNIT_NAME]), `systemctl --user start ${UNIT_NAME}`);
+}
 export const stopUnit = (run = runQuiet) => must(run('systemctl', ['--user', 'stop', UNIT_NAME]), `systemctl --user stop ${UNIT_NAME}`);
-export const restartUnit = (run = runQuiet) => must(run('systemctl', ['--user', 'restart', UNIT_NAME]), `systemctl --user restart ${UNIT_NAME}`);
+export function restartUnit(run = runQuiet) {
+  run('systemctl', ['--user', 'reset-failed', UNIT_NAME]);
+  return must(run('systemctl', ['--user', 'restart', UNIT_NAME]), `systemctl --user restart ${UNIT_NAME}`);
+}
 
 /** { active, sub, enabled, pid, restarts } from systemd, or null without systemd. */
 export function unitStatus(run = runQuiet) {

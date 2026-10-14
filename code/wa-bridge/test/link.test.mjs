@@ -150,6 +150,7 @@ test('requesting a pairing code is not being linked: cancel works and a retry st
     assert.equal(r.sockets[0].ended, true);
     const again = r.wa.startLink({ method: 'qr' });
     await tick();
+    assert.equal(r.sockets.at(-1).opts.auth.creds.me, undefined, 'the leftover `me` is gone: Baileys registers again instead of trying to log in');
     r.sockets.at(-1).ev.emit('connection.update', { qr: '2@fresh' });
     assert.equal((await again).qr.data, '2@fresh', 'and a new link can start, no already_linked');
   } finally { await r.stop(); }

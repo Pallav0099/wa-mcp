@@ -6,14 +6,14 @@
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { call, clientConfig } from '../client.mjs';
 import { defaultDataDir } from '../config.mjs';
 import { installLayout, linkedVersion, nodeBinary, pruneInstall, switchLink } from '../install-layout.mjs';
 import { ourDaemonAnswers } from '../lifecycle.mjs';
 import { compareVersions, downloadUrl, hostArch, nodeMirror, parseSums, verifySums } from '../release.mjs';
-import { installUnit, restartUnit, startDetached, systemdAvailable, unitInstalled, unitStatus } from '../service.mjs';
+import { installUnit, restartUnit, startDetached, startUnit, systemdAvailable, unitInstalled, unitStatus } from '../service.mjs';
 import { VERSION } from '../version.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -59,8 +59,9 @@ async function snapshotStore(fromVersion, line) {
   const src = new DatabaseSync(db, { readOnly: true });
   // one step (one read transaction): a busy daemon cannot keep restarting the copy; WAL lets it write meanwhile
   try { await backup(src, dest, { rate: 2147483647 }); } finally { src.close(); }
-  const older = readdirSync(dir).filter((x) => x.endsWith('.sqlite') && join(dir, x) !== dest).sort().reverse().slice(1);
-  for (const f of older) rmSync(join(dir, f), { force: true });
+  const older = readdirSync(dir).filter((x) => x.endsWith('.sqlite') && join(dir, x) !== dest)
+    .map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t).slice(1);
+  for (const { f } of older) rmSync(join(dir, f), { force: true });
   line(`  store snapshot: ${dest}`);
   return dest;
 }
@@ -180,6 +181,12 @@ export async function postInstallCommand(pos, flags, { line = (s = '') => consol
     if (unitStatus()?.active === 'active') {
       restartUnit();
       line(`  restarted the background service`);
+    } else if (await daemonUp()) {
+      // running, but not under the unit (started while the user bus was unreachable): hand it over
+      await call('POST', '/shutdown').catch(() => {});
+      await waitFor(async () => !(await daemonUp()) && !existsSync(paths.lock), 15_000);
+      startUnit();
+      line(`  restarted the daemon under the background service`);
     }
   } else if (await daemonUp()) {
     await call('POST', '/shutdown').catch(() => {});
@@ -197,6 +204,8 @@ export async function postInstallCommand(pos, flags, { line = (s = '') => consol
     for (const r of results.filter((x) => x.error)) line(`  ${r.name}: ${r.error}`);
   }
   if (layout) {
+    const marker = join(layout.root, '.wa-bridge-install');
+    if (!existsSync(marker)) writeFileSync(marker, 'wa-bridge install root (remove with: wa uninstall)\n');
     const removed = pruneInstall(layout);
     if (removed.length) line(`  removed old: ${removed.join(', ')}`);
   }

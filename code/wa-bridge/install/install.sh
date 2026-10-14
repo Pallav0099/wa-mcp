@@ -64,11 +64,8 @@ process.exit(ok ? 0 : 1);
 
 add_path_line() { # file
   [ -f "$1" ] && grep -q '# >>> wa-bridge >>>' "$1" && return 0
-  if ! {
-    printf '\n# >>> wa-bridge >>>\n'
-    printf 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac\n'
-    printf '# <<< wa-bridge <<<\n'
-  } >> "$1" 2>/dev/null; then
+  # a subshell, so a failed redirection is an ordinary failure in every sh (bash-as-sh included), never fatal
+  if ! ( printf '\n# >>> wa-bridge >>>\ncase ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac\n# <<< wa-bridge <<<\n' >> "$1" ) 2>/dev/null; then
     warn "could not add ~/.local/bin to PATH in $1 (read-only?); add it yourself"
     return 0
   fi
@@ -129,7 +126,8 @@ main() {
   ROOT=${ROOT%/}
   MARKER="$ROOT/.wa-bridge-install"
   # never install into (and later uninstall) a directory that holds other things
-  if [ -d "$ROOT" ] && [ ! -f "$MARKER" ] && [ -n "$(ls -A "$ROOT" 2>/dev/null)" ]; then
+  if [ -d "$ROOT" ] && [ ! -f "$MARKER" ] && [ -n "$(ls -A "$ROOT" 2>/dev/null)" ] \
+     && ! grep -q '^# wa-bridge launcher, written by install.sh' "$ROOT/bin/wa-bridge" 2>/dev/null; then
     die "$ROOT exists, is not empty and is not a wa-bridge install; set WA_BRIDGE_INSTALL to a new directory"
   fi
   # a re-run keeps the data directory the existing launcher pins, unless WA_BRIDGE_HOME says otherwise
@@ -261,9 +259,11 @@ EOF
     if have fish || [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/fish" ]; then
       fishconf="${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/wa-bridge.fish"
       if [ ! -f "$fishconf" ]; then
-        mkdir -p "$(dirname "$fishconf")"
-        printf '# added by the wa-bridge installer; remove with: wa uninstall\nif not contains -- $HOME/.local/bin $PATH\n    set -gx PATH $HOME/.local/bin $PATH\nend\n' > "$fishconf"
-        PATH_FILES="$PATH_FILES $fishconf"
+        if ( mkdir -p "$(dirname "$fishconf")" && printf '# added by the wa-bridge installer; remove with: wa uninstall\nif not contains -- $HOME/.local/bin $PATH\n    set -gx PATH $HOME/.local/bin $PATH\nend\n' > "$fishconf" ) 2>/dev/null; then
+          PATH_FILES="$PATH_FILES $fishconf"
+        else
+          warn "could not write $fishconf; add ~/.local/bin to fish's PATH yourself"
+        fi
       fi
     fi
   fi

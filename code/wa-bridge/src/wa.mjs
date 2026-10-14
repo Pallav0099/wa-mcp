@@ -313,6 +313,21 @@ export class WhatsApp extends EventEmitter {
     await this.loadAuth();
   }
 
+  /**
+   * An unfinished pairing-code attempt leaves creds.me without creds.account (Baileys writes `me` when the code
+   * is requested). With `me` set, Baileys would try to LOG IN instead of registering, and never issue a QR or code
+   * again. Those are not credentials (nothing was ever paired), so start from a fresh auth state.
+   */
+  async resetUnregisteredAuth() {
+    const c = this.auth?.state?.creds;
+    if (!c?.me || c?.account) return false;
+    this.teardown();
+    await rm(this.cfg.paths.auth, { recursive: true, force: true });
+    await this.loadAuth();
+    this.log.info('auth_reset_unregistered');
+    return true;
+  }
+
   /** Move the credentials aside (never delete them) so a fresh, empty auth state can be linked. */
   async archiveAuth() {
     try {
@@ -380,6 +395,7 @@ export class WhatsApp extends EventEmitter {
       await waitFor(() => this.qr || this.pairingCode || this.link?.error || this.linkError || this.state === 'open', 30_000);
       return this.linkStatus();
     }
+    await this.resetUnregisteredAuth();
     this.link = { method, phone: digits, startedAt: nowSec(), codeRequested: false, error: null };
     this.qr = null;
     this.pairingCode = null;

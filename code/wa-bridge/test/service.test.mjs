@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { unitText, installUnit, uninstallUnit, unitPath, unitStatus, lingerEnabled, startDaemonProcess, UNIT_NAME } from '../src/service.mjs';
+import { unitText, installUnit, uninstallUnit, unitPath, unitStatus, lingerEnabled, startDaemonProcess, startUnit, restartUnit, UNIT_NAME } from '../src/service.mjs';
 import { selfCommand, BIN_SCRIPT } from '../src/self.mjs';
 
 function fakeRun(responses = {}) {
@@ -102,4 +102,22 @@ test('self command: the installed launcher when present, else node + bin/wa.mjs'
     assert.deepEqual(selfCommand({ WA_BRIDGE_LAUNCHER: join(dir, 'missing') }), [process.execPath, '--disable-warning=ExperimentalWarning', BIN_SCRIPT]);
     assert.deepEqual(selfCommand({}), [process.execPath, '--disable-warning=ExperimentalWarning', BIN_SCRIPT]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('an explicit start or restart first clears a start-limit-hit state', () => {
+  for (const fn of [startUnit, restartUnit]) {
+    const { run, calls } = fakeRun();
+    fn(run);
+    assert.equal(calls[0], `systemctl --user reset-failed ${UNIT_NAME}`);
+    assert.match(calls[1], /^systemctl --user (start|restart) wa-bridge\.service$/);
+  }
+});
+
+test('a port override survives a later refresh by a process without WA_BRIDGE_PORT', () => {
+  const home = mkdtempSync(join(tmpdir(), 'wab-svc-'));
+  try {
+    installUnit({ dataDir: '/d', command: ['/l'], run: fakeRun().run, env: { HOME: home, WA_BRIDGE_PORT: '3999' } });
+    installUnit({ dataDir: '/d', command: ['/l'], run: fakeRun().run, env: { HOME: home } });
+    assert.match(readFileSync(unitPath({ HOME: home }), 'utf8'), /^Environment=WA_BRIDGE_PORT=3999$/m);
+  } finally { rmSync(home, { recursive: true, force: true }); }
 });
