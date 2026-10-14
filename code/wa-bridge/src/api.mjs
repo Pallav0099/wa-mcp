@@ -40,6 +40,11 @@ export function createApi({ cfg, store, wa, outbox, log, onShutdown = () => {} }
   }));
   route('GET', '/link', () => wa.linkStatus());
   route('POST', '/link', ({ body }) => wa.startLink({ method: body.method || 'qr', phone: body.phone }));
+  route('POST', '/link/cancel', () => wa.cancelLink());
+  route('POST', '/unlink-local', async ({ body }) => {
+    if (body.confirm !== 'UNLINK') throw new BridgeError('bad_request', 'this archives the credentials on this machine; send {"confirm":"UNLINK"}');
+    return wa.unlinkLocal();
+  });
   route('POST', '/pause', async () => { await wa.pause(); store.audit('paused', {}); return wa.status(); });
   route('POST', '/resume', async () => { await wa.resume(); store.audit('resumed', {}); return wa.status(); });
   route('POST', '/logout', async ({ body }) => {

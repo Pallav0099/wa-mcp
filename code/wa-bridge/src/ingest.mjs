@@ -12,7 +12,11 @@ export class Ingest {
     this.log = log;
     this.me = { pn: null, lid: null, name: null };
     this.counters = { messages: 0, history: 0, reactions: 0, edits: 0, deletes: 0 };
+    // History sync progress since this daemon started (shown by `wa connect` / `wa status`).
+    this.sync = { chunks: 0, messages: 0, lastChunkAt: null, syncType: null, progress: null, isLatest: false };
   }
+
+  syncStatus() { return { ...this.sync }; }
 
   setMe({ pn, lid, name }) {
     this.me = { pn: pn ? bareJid(pn) : null, lid: lid ? bareJid(lid) : null, name: name || null };
@@ -99,6 +103,14 @@ export class Ingest {
       for (const c of chats || []) this.chat(c);
       for (const m of messages || []) if (this.message(m, { live: false })) stored++;
     });
+    this.sync = {
+      chunks: this.sync.chunks + 1,
+      messages: this.sync.messages + stored,
+      lastChunkAt: nowSec(),
+      syncType: syncType ?? null,
+      progress: progress ?? null,
+      isLatest: !!isLatest,
+    };
     this.log.info('history_chunk', {
       syncType, progress: progress ?? null, isLatest: !!isLatest,
       chats: chats?.length || 0, contacts: contacts?.length || 0, messages: messages?.length || 0, stored,

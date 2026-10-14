@@ -85,3 +85,19 @@ test('logout demands an explicit confirmation word', async () => {
     assert.equal(res.status, 400);
   } finally { await r.stop(); }
 });
+
+test('local unlink demands its own confirmation word; link cancel is a plain POST', async () => {
+  const r = await rig();
+  let unlinked = 0;
+  r.wa.unlinkLocal = async () => { unlinked++; return { unlinked: true, archived: '/x/auth.revoked-1', stillListedOnPhone: false }; };
+  r.wa.cancelLink = () => ({ state: 'unlinked', linked: false, method: null });
+  try {
+    assert.equal((await r.call('POST', '/unlink-local', { body: {} })).status, 400);
+    assert.equal((await r.call('POST', '/unlink-local', { body: { confirm: 'LOGOUT' } })).status, 400, 'the logout word does not unlink locally');
+    assert.equal(unlinked, 0);
+    const ok = await r.call('POST', '/unlink-local', { body: { confirm: 'UNLINK' } });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.json.unlinked, true);
+    assert.equal((await r.call('POST', '/link/cancel')).json.state, 'unlinked');
+  } finally { await r.stop(); }
+});

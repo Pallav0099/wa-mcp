@@ -4,10 +4,14 @@
 // It holds no state and no WhatsApp connection of its own; every tool is one call to the local daemon.
 
 import { createInterface } from 'node:readline';
-import { call, enc, qs } from '../src/client.mjs';
+import { call, enc, qs, setAutoStart } from '../src/client.mjs';
 import { fmtMsg, fmtChat, linkText, draftText, statusText, DATA_NOTE } from '../src/format.mjs';
 import { formatTs } from '../src/util.mjs';
 import { VERSION } from '../src/version.mjs';
+
+// The first tool call starts the daemon if it is down (never during `initialize`: clients time out MCP startup).
+// A daemon the user stopped with `wa stop` stays stopped; the tool then says so.
+setAutoStart(true);
 
 const SERVER = { name: 'wa-bridge', version: VERSION };
 const INSTRUCTIONS = [
@@ -153,12 +157,16 @@ async function handle(msg) {
   }
 }
 
+const pending = new Set();
 const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
 rl.on('line', (line) => {
   const s = line.trim();
   if (!s) return;
   let msg;
   try { msg = JSON.parse(s); } catch { return send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }); }
-  handle(msg).catch((e) => { if (msg.id !== undefined) fail(msg.id, -32603, e.message); });
+  const p = handle(msg).catch((e) => { if (msg.id !== undefined) fail(msg.id, -32603, e.message); });
+  pending.add(p);
+  p.finally(() => pending.delete(p));
 });
-rl.on('close', () => process.exit(0));
+// stdin closed: answer what is still in flight, then exit
+rl.on('close', () => { Promise.allSettled([...pending]).then(() => process.exit(0)); });

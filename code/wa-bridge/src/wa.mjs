@@ -17,7 +17,7 @@
 
 import { EventEmitter } from 'node:events';
 import { existsSync } from 'node:fs';
-import { rename } from 'node:fs/promises';
+import { rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } from '@whiskeysockets/baileys';
 import pino from 'pino';
@@ -201,6 +201,7 @@ export class WhatsApp extends EventEmitter {
       this.link = null;
       this.qr = null;
       this.pairingCode = null;
+      this.removeQrImage();
       clearTimeout(this.stableTimer);
       this.stableTimer = setTimeout(() => { this.attempt = 0; }, 60_000); // only a stable minute resets backoff
       this.setState('open');
@@ -269,14 +270,24 @@ export class WhatsApp extends EventEmitter {
         });
       return;
     }
+    // `data` is the raw QR payload: `wa connect` draws it in the terminal. It is only ever served to holders of
+    // the API token and lives for one QR rotation (~20 s) inside a link window the user opened.
     const at = nowSec();
     QRCode.toFile(this.cfg.paths.qr, qr, { width: 512, margin: 2 })
       .then(() => {
-        this.qr = { at, path: this.cfg.paths.qr };
+        if (!this.link) return; // the window closed while the image was being written
+        this.qr = { at, path: this.cfg.paths.qr, data: qr };
         this.log.info('qr_issued');
         this.emit('qr', this.qr);
       })
-      .catch((e) => this.log.error('qr_write_failed', { error: e }));
+      .catch((e) => {
+        this.log.error('qr_write_failed', { error: e });
+        if (this.link) this.qr = { at, path: null, data: qr }; // the terminal can still show it
+      });
+  }
+
+  removeQrImage() {
+    rm(this.cfg.paths.qr, { force: true }).catch(() => { /* nothing to remove */ });
   }
 
   scheduleReconnect(code, why) {
@@ -291,16 +302,47 @@ export class WhatsApp extends EventEmitter {
     this.setState('logged_out');
     this.store.audit('logged_out', {});
     this.me = null;
+    try { await this.archiveAuth(); } catch { /* logged; a fresh auth state is loaded either way */ }
+    await this.loadAuth();
+  }
+
+  /** Move the credentials aside (never delete them) so a fresh, empty auth state can be linked. */
+  async archiveAuth() {
     try {
       if (existsSync(this.cfg.paths.auth)) {
         const archived = `${this.cfg.paths.auth}.revoked-${nowSec()}`;
         await rename(this.cfg.paths.auth, archived);
         this.log.warn('auth_archived', { archived });
+        return archived;
       }
     } catch (e) {
       this.log.error('auth_archive_failed', { error: e });
+      throw new BridgeError('internal', `could not archive the credentials: ${e.message}`);
     }
+    return null;
+  }
+
+  /**
+   * Forget the link on THIS machine only: close the socket, archive the credentials, back to `unlinked`.
+   * The way out of `replaced`, `forbidden` or broken credentials, where a remote logout is impossible because
+   * it needs an open connection. If the device was still linked, it stays listed on the phone until removed there.
+   */
+  async unlinkLocal() {
+    const wasOpen = this.state === 'open';
+    clearTimeout(this.reconnectTimer);
+    clearTimeout(this.stableTimer);
+    clearTimeout(this.linkTimer);
+    this.link = null;
+    this.qr = null;
+    this.pairingCode = null;
+    this.paused = false;
+    this.teardown();
+    this.me = null;
+    const archived = await this.archiveAuth();
     await this.loadAuth();
+    this.store.audit('unlinked_local', { wasOpen, archived: !!archived });
+    this.setState('unlinked', { reason: 'unlinked_local' });
+    return { unlinked: true, archived, stillListedOnPhone: wasOpen };
   }
 
   teardown() {
@@ -325,6 +367,12 @@ export class WhatsApp extends EventEmitter {
       digits = phoneDigits(phone);
       if (!digits || digits.length < 11) throw new BridgeError('bad_request', 'pairing by code needs the full international number, e.g. 15550100001');
     }
+    // Idempotent: a second caller (another terminal, an agent, a retry) joins the open window instead of
+    // tearing down the socket the phone may be scanning right now.
+    if (this.link && !this.linkExpired() && this.link.method === method && this.link.phone === digits) {
+      await waitFor(() => this.qr || this.pairingCode || this.link?.error || this.linkError || this.state === 'open', 30_000);
+      return this.linkStatus();
+    }
     this.link = { method, phone: digits, startedAt: nowSec(), codeRequested: false, error: null };
     this.qr = null;
     this.pairingCode = null;
@@ -343,8 +391,18 @@ export class WhatsApp extends EventEmitter {
     this.link = null;
     this.qr = null;
     this.pairingCode = null;
+    this.removeQrImage();
     this.teardown();
     if (!this.isLinked()) this.setState('unlinked', { reason });
+  }
+
+  /** Close an open link window on request (Ctrl-C in `wa connect`). A no-op when none is open. */
+  cancelLink() {
+    if (this.link && !this.isLinked()) {
+      this.store.audit('link_cancelled', { method: this.link.method });
+      this.endLink('cancelled');
+    }
+    return this.linkStatus();
   }
 
   linkStatus() {
@@ -409,6 +467,7 @@ export class WhatsApp extends EventEmitter {
       lastDisconnect: this.lastDisconnect,
       reconnectAttempt: this.attempt,
       link: this.link ? this.linkStatus() : null,
+      sync: this.ingest.syncStatus(),
     };
   }
 
