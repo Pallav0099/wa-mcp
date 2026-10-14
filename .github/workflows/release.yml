@@ -1,0 +1,66 @@
+name: release
+
+# Push a tag vX.Y.Z (matching code/wa-bridge/package.json) to publish a release. Needs the repository secret
+# WA_BRIDGE_SIGNING_KEY: the Ed25519 private key (PEM) whose public key is in src/release.mjs and install.sh.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build linux-${{ matrix.arch }}
+    strategy:
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: x64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: code/wa-bridge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: code/wa-bridge/.node-version
+      - name: the tag matches package.json
+        run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - run: node scripts/test-install.mjs
+      - run: node scripts/build-release.mjs --arch ${{ matrix.arch }} --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.arch }}
+          path: code/wa-bridge/dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: code/wa-bridge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: code/wa-bridge/.node-version
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: code/wa-bridge/dist
+      - run: cp install/install.sh dist/install.sh
+      - run: node scripts/make-sums.mjs dist
+      - run: node scripts/sign.mjs dist
+        env:
+          WA_BRIDGE_SIGNING_KEY: ${{ secrets.WA_BRIDGE_SIGNING_KEY }}
+      - name: publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "wa-bridge ${GITHUB_REF_NAME#v}" --generate-notes

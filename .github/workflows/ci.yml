@@ -24,9 +24,64 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: npm ci --no-audit --no-fund
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
       - name: only sharp ships native code
         run: |
           extra=$(find node_modules -name '*.node' | grep -v '^node_modules/@img/sharp-linux-' || true)
           if [ -n "$extra" ]; then echo "unexpected native modules:"; echo "$extra"; exit 1; fi
+
+  install:
+    name: install end to end (${{ matrix.os }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: code/wa-bridge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: code/wa-bridge/.node-version
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: build, sign (throwaway key), serve, install, update, rollback, uninstall
+        run: node scripts/test-install.mjs
+
+  distros:
+    name: install on ${{ matrix.image }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: 'ubuntu:20.04', expect: ok }
+          - { image: 'ubuntu:24.04', expect: ok }
+          - { image: 'debian:11', expect: ok }
+          - { image: 'debian:12', expect: ok }
+          - { image: 'fedora:41', expect: ok }
+          - { image: 'archlinux:latest', expect: ok }
+          - { image: 'alpine:3.20', expect: unsupported }
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: code/wa-bridge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: code/wa-bridge/.node-version
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: serve a freshly built release
+        run: |
+          node scripts/test-install.mjs --serve-only > "$RUNNER_TEMP/serve.json" 2> "$RUNNER_TEMP/serve.log" &
+          for i in $(seq 1 240); do grep -q '"current"' "$RUNNER_TEMP/serve.json" 2>/dev/null && break; sleep 1; done
+          cat "$RUNNER_TEMP/serve.json"
+      - name: install in ${{ matrix.image }}
+        run: |
+          url=$(node -p "JSON.parse(require('fs').readFileSync(process.env.RUNNER_TEMP + '/serve.json', 'utf8').trim().split('\n').pop()).current")
+          mirror=$(node -p "JSON.parse(require('fs').readFileSync(process.env.RUNNER_TEMP + '/serve.json', 'utf8').trim().split('\n').pop()).node")
+          sh scripts/docker-install-test.sh '${{ matrix.image }}' "$url" "$mirror" '${{ matrix.expect }}'
