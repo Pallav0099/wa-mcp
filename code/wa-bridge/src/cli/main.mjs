@@ -12,7 +12,7 @@ import { VERSION } from '../version.mjs';
 import { confirm } from './prompt.mjs';
 
 // Commands that must not start the daemon as a side effect.
-const NO_AUTOSTART = new Set(['stop', 'shutdown', 'version', 'help', 'doctor', 'uninstall', 'update', 'post-install', 'logs', 'agents']);
+const NO_AUTOSTART = new Set(['stop', 'shutdown', 'version', 'help', 'doctor', 'uninstall', 'update', 'post-install', 'logs', 'agents', 'backup']);
 
 /** Returns the process exit code. */
 export async function main(argv) {
@@ -35,6 +35,7 @@ export async function main(argv) {
     case 'update': return (await import('./update.mjs')).updateCommand(pos, flags);
     case 'post-install': return (await import('./update.mjs')).postInstallCommand(pos, flags); // run by install.sh / updates
     case 'uninstall': return (await import('./uninstall.mjs')).uninstallCommand(pos, flags);
+    case 'backup': return (await import('./backup.mjs')).backupCommand(pos, flags);
     case 'logout': // the original command name; keeps requiring --yes
       if (!flags.yes) throw usage('wa logout --yes   (this UNLINKS the bridge from the WhatsApp account)');
       return disconnect(flags);

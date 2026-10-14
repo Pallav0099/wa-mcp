@@ -68,6 +68,8 @@ export async function uninstallCommand(pos, flags, { line = (s = '') => console.
     uninstallUnit();
     line(`✓ removed the background service (${unitPath()})`);
   }
+  const { unscheduleBackups } = await import('./backup.mjs');
+  if (systemdAvailable() && unscheduleBackups()) line('✓ removed the daily backup timer (existing backups are kept)');
   if (token && (await ourDaemonAnswers(port, token))) {
     await call('POST', '/shutdown').catch(() => {});
     line('✓ stopped the daemon');
