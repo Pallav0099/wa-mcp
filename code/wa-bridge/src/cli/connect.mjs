@@ -5,9 +5,10 @@
 //
 // Every dependency is injectable so the whole flow runs in tests against a fake API.
 
-import { rmSync } from 'node:fs';
-import { call as apiCall, clientConfig, ensureDaemon, stoppedFlag } from '../client.mjs';
+import { call as apiCall } from '../client.mjs';
 import { formatTs, jidUser } from '../util.mjs';
+import { UNIT_NAME } from '../service.mjs';
+import { bringUp } from './servicecmd.mjs';
 import { confirm as askConfirm } from './prompt.mjs';
 import { pickMargin, qrMatrix, qrDimensions, renderQr } from './qr.mjs';
 
@@ -25,10 +26,7 @@ const who = (me) => (me ? `+${jidUser(me.pn) || jidUser(me.lid)}${me.name ? ` ($
 function defaults() {
   return {
     call: apiCall,
-    startDaemon: async () => {
-      try { rmSync(stoppedFlag(clientConfig(undefined, { requireToken: false }).paths), { force: true }); } catch { /* none */ }
-      return ensureDaemon({ ignoreStopped: true });
-    },
+    startDaemon: (flags) => bringUp({ service: !flags['no-service'] }),
     out: (s) => process.stdout.write(s),
     isTTY: !!process.stdout.isTTY,
     size: () => ({ cols: process.stdout.columns || 80, rows: process.stdout.rows || 24 }),
@@ -47,7 +45,9 @@ export async function connectCommand(pos, flags, deps = {}) {
   const line = (s = '') => d.out(s + '\n');
   const method = flags.code ? 'code' : 'qr';
 
-  await d.startDaemon();
+  const up = await d.startDaemon(flags);
+  if (up?.via === 'systemd') line(`✓ Background service running (systemd --user: ${UNIT_NAME}${up.unitCreated ? ', starts at login' : ''})`);
+  else if (up?.via === 'detached') line('✓ Running in the background (no systemd user session: after a reboot run wa start)');
   let h = await d.call('GET', '/health');
 
   if (h.linked) {

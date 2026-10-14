@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig, defaultDataDir } from './config.mjs';
 import { ourDaemonAnswers } from './lifecycle.mjs';
-import { startDetached } from './service.mjs';
+import { startDaemonProcess } from './service.mjs';
 
 let autoStart = false;
 /** CLI and MCP turn this on: a call that finds the daemon down starts it once, then retries. */
@@ -25,11 +25,12 @@ export function clientConfig(root = defaultDataDir(), { requireToken = true } = 
 export const stoppedFlag = (paths) => join(paths.root, 'stopped');
 
 /**
- * Make sure the daemon for this data directory is answering. Starts it if needed and waits for it.
+ * Make sure the daemon for this data directory is answering. Starts it if needed and waits for it: through the
+ * systemd unit when there is one (`install: true` creates it), otherwise detached.
  * Resolves { started: false } if it was already up, { started: true, via } after starting it.
  * Refuses (code 'stopped') when the user stopped it with `wa stop`, unless `ignoreStopped` is set.
  */
-export async function ensureDaemon({ root = defaultDataDir(), timeoutMs = 15_000, ignoreStopped = false, starter = defaultStarter } = {}) {
+export async function ensureDaemon({ root = defaultDataDir(), timeoutMs = 15_000, ignoreStopped = false, install = false, starter = startDaemonProcess } = {}) {
   const first = clientConfig(root, { requireToken: false });
   if (first.token && (await ourDaemonAnswers(first.port, first.token))) return { started: false };
   if (!ignoreStopped && existsSync(stoppedFlag(first.paths))) {
@@ -37,7 +38,7 @@ export async function ensureDaemon({ root = defaultDataDir(), timeoutMs = 15_000
     err.code = 'stopped';
     throw err;
   }
-  const via = await starter(first.paths);
+  const via = await starter(first.paths, { install });
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 200));
@@ -47,11 +48,6 @@ export async function ensureDaemon({ root = defaultDataDir(), timeoutMs = 15_000
   const err = new Error(`wa-bridge did not start within ${Math.round(timeoutMs / 1000)} s; see ${join(first.paths.logs, 'daemon-stderr.log')} or run: wa doctor`);
   err.code = 'start_failed';
   throw err;
-}
-
-async function defaultStarter(paths) {
-  startDetached(paths);
-  return 'detached';
 }
 
 export async function call(method, path, body, { root } = {}) {
