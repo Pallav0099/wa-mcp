@@ -10,8 +10,8 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BridgeError, extForMime, parseWhen } from './util.mjs';
+import { VERSION } from './version.mjs';
 
-const VERSION = '0.1.0';
 const MEDIA_KINDS = new Set(['image', 'video', 'audio', 'voice', 'document', 'sticker', 'video_note']);
 const STATUS_BY_CODE = {
   bad_request: 400, unauthorized: 401, forbidden: 403, sending_disabled: 403, not_found: 404, not_on_whatsapp: 404,
@@ -194,7 +194,10 @@ export function createApi({ cfg, store, wa, outbox, log, onShutdown = () => {} }
         resolve(port);
       });
     }),
-    close: () => new Promise((resolve) => server.close(() => resolve())),
+    close: () => new Promise((resolve) => {
+      server.close(() => resolve());
+      server.closeIdleConnections(); // keep-alive clients must not hold a graceful stop open
+    }),
     get port() { return port; },
   };
 }

@@ -338,10 +338,11 @@ export class Outbox {
   }
 
   /**
-   * The one unattended path (config: sending.selfUnattended; vault decision 2026-09-27-wa-self-alerts): text to
-   * the linked account's OWN chat only. It never reads a recipient from the request, labels every message with its
-   * source so an automated message is always recognisable, and goes through draft + confirm internally, so the
-   * rate limits, the store record and the audit trail are the same as any other send.
+   * The one unattended path (config: sending.selfUnattended, off by default): text to the linked account's OWN
+   * chat only. It never reads a recipient from the request, labels every message with its source so an automated
+   * message is always recognisable, and goes through draft + confirm internally, so the rate limits, the store
+   * record and the audit trail are the same as any other send. allowNew is safe here because the recipient is
+   * fixed to the account itself; it lets a fresh install whose self-chat is not in the store yet still send.
    */
   async sendSelf(req = {}) {
     const s = this.cfg.sending;
@@ -349,10 +350,10 @@ export class Outbox {
     const me = this.wa.status()?.me?.pn;
     if (!me) throw new BridgeError('not_connected', 'the linked account is not known yet (not linked, or not open)');
     const source = String(req.source ?? '').trim();
-    if (!/^[a-z0-9][a-z0-9-]{1,39}$/.test(source)) throw new BridgeError('bad_request', 'source must be a short lowercase label such as vault-health');
+    if (!/^[a-z0-9][a-z0-9-]{1,39}$/.test(source)) throw new BridgeError('bad_request', 'source must be a short lowercase label such as health-check');
     const body = String(req.text ?? '').trim();
     if (!body) throw new BridgeError('bad_request', 'text is empty');
-    const d = this.draft({ action: 'text', to: me, text: `[${source}] ${body}` });
+    const d = this.draft({ action: 'text', to: me, text: `[${source}] ${body}`, allowNew: true });
     this.store.audit('self_unattended', { token: d.token, source });
     return this.confirm(d.token);
   }

@@ -2,10 +2,14 @@
 
 import { loadConfig, defaultDataDir } from './config.mjs';
 
-export function clientConfig(root = defaultDataDir()) {
+export function clientConfig(root = defaultDataDir(), { requireToken = true } = {}) {
   const cfg = loadConfig(root, { create: false });
-  if (!cfg.token) throw new Error(`no API token at ${cfg.paths.token}; the daemon has never started with this data directory`);
-  return { base: `http://127.0.0.1:${cfg.port}`, token: cfg.token, paths: cfg.paths };
+  if (!cfg.token && requireToken) {
+    const err = new Error(`wa-bridge has never started with ${cfg.paths.root}; run: wa start (or wa connect)`);
+    err.code = 'not_started';
+    throw err;
+  }
+  return { base: `http://127.0.0.1:${cfg.port}`, port: cfg.port, token: cfg.token, paths: cfg.paths };
 }
 
 export async function call(method, path, body, { root } = {}) {
@@ -18,7 +22,7 @@ export async function call(method, path, body, { root } = {}) {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (e) {
-    const err = new Error(`wa-bridge is not reachable at ${base} (${e.cause?.code || e.message}); start it with scripts\\start.ps1`);
+    const err = new Error(`wa-bridge is not running at ${base} (${e.cause?.code || e.message}); run: wa start`);
     err.code = 'unreachable';
     throw err;
   }

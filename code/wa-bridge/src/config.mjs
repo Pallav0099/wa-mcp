@@ -1,10 +1,13 @@
 // Configuration and on-disk layout.
 //
 // Everything the bridge owns lives in ONE data directory, outside any synced or mirrored folder:
-//   %LOCALAPPDATA%\wa-bridge   (override with WA_BRIDGE_HOME)
-// Code lives in the git repo; data never does.
+//   Linux/macOS: $XDG_DATA_HOME/wa-bridge, default ~/.local/share/wa-bridge
+//   Windows:     %LOCALAPPDATA%\wa-bridge
+//   Override:    WA_BRIDGE_HOME (the installed launcher always sets it, so every process agrees)
+// The directory is private to the user (0700): it holds the WhatsApp credentials and every message.
+// Code lives in the install directory or the git repo; data never does.
 
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
@@ -25,20 +28,22 @@ export const DEFAULTS = Object.freeze({
     maxPerMinute: 6,
     maxPerDay: 120,
     requireKnownChat: true, // refuse chats the store has never seen unless the draft says allowNew
-    // The ONE exception to draft -> confirm (vault decision 2026-09-27-wa-self-alerts, his grant): POST /send/self
-    // sends text to the linked account's OWN chat, unattended, for the vault's automated alerts. It takes no
-    // recipient, so it cannot reach anyone else. Off unless config.json turns it on.
+    // The ONE exception to draft -> confirm: POST /send/self (`wa notify`) sends text to the linked account's OWN
+    // chat, unattended, for automated alerts and reminders. It takes no recipient, so it cannot reach anyone
+    // else. Off unless config.json turns it on.
     selfUnattended: false,
     maxTextLength: 4096,
     maxMediaBytes: 100 * 1024 * 1024,
   },
-  log: { level: 'info', baileysLevel: 'warn' },
+  // keepDays: daily log files older than this are deleted by the daemon
+  log: { level: 'info', baileysLevel: 'warn', keepDays: 30 },
 });
 
 export function defaultDataDir() {
   if (process.env.WA_BRIDGE_HOME) return process.env.WA_BRIDGE_HOME;
-  const base = process.env.LOCALAPPDATA || join(process.env.HOME || process.env.USERPROFILE || '.', '.local', 'share');
-  return join(base, 'wa-bridge');
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) return join(process.env.LOCALAPPDATA, 'wa-bridge');
+  const home = process.env.HOME || process.env.USERPROFILE || '.';
+  return join(process.env.XDG_DATA_HOME || join(home, '.local', 'share'), 'wa-bridge');
 }
 
 export function pathsFor(root) {
@@ -60,12 +65,19 @@ export function pathsFor(root) {
 /** Load (and on first run create) the data directory, config file and API token. */
 export function loadConfig(root = defaultDataDir(), { create = true } = {}) {
   const paths = pathsFor(root);
-  if (create) for (const d of [paths.root, paths.media, paths.outgoing, paths.logs]) mkdirSync(d, { recursive: true });
+  if (create) {
+    for (const d of [paths.root, paths.media, paths.outgoing, paths.logs]) mkdirSync(d, { recursive: true, mode: 0o700 });
+    secureDataDir(paths);
+  }
   // config.json holds OVERRIDES only, so changed defaults reach existing installs.
   // config.defaults.json is rewritten on every start as a reference of what can be overridden.
   let user = {};
   if (existsSync(paths.config)) {
-    user = JSON.parse(readFileSync(paths.config, 'utf8'));
+    try {
+      user = JSON.parse(readFileSync(paths.config, 'utf8'));
+    } catch (e) {
+      throw new Error(`${paths.config} is not valid JSON (${e.message}); fix it or move it away to use the defaults`);
+    }
   } else if (create) {
     writeFileSync(paths.config, '{}\n');
   }
@@ -77,6 +89,17 @@ export function loadConfig(root = defaultDataDir(), { create = true } = {}) {
   cfg.paths = paths;
   cfg.token = readOrCreateToken(paths.token, create);
   return cfg;
+}
+
+/**
+ * Make the data directory private to the user. A 0700 directory keeps everything below it (credentials,
+ * wa.sqlite, media, logs) unreadable by other local users even if a file inside was created 0644.
+ * No-op where POSIX modes do not apply (Windows relies on the user-profile ACL).
+ */
+export function secureDataDir(paths) {
+  if (process.platform === 'win32') return;
+  try { chmodSync(paths.root, 0o700); } catch { /* best effort; wa doctor reports it */ }
+  try { if (existsSync(paths.token)) chmodSync(paths.token, 0o600); } catch { /* best effort */ }
 }
 
 function readOrCreateToken(file, create) {

@@ -12,6 +12,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { bareJid, chatKind, isLidJid, isPnJid, isGroupJid, jidUser, nowSec, phoneDigits, ftsQuery, BridgeError } from './util.mjs';
 
+export const SCHEMA_VERSION = 1;
+
 const SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS chats (
   jid TEXT PRIMARY KEY,
@@ -167,6 +169,10 @@ export class Store {
 
   migrate() {
     const v = this.db.prepare('PRAGMA user_version').get().user_version;
+    // A store written by a newer release (e.g. after `wa update --rollback`) is never opened by older code.
+    if (v > SCHEMA_VERSION) {
+      throw new BridgeError('schema_too_new', `wa.sqlite uses schema v${v}, newer than this release supports (v${SCHEMA_VERSION}); run \`wa update\` or restore a backup`);
+    }
     if (v < 1) {
       this.db.exec(SCHEMA_V1);
       this.db.exec('PRAGMA user_version = 1');
@@ -639,8 +645,15 @@ export class Store {
       .map((r) => ({ ...r, preview: JSON.parse(r.preview_json), preview_json: undefined }));
   }
 
+  /** Sends that count against the rate limits: finished ones in the window plus any still in flight. */
   countSentSince(sec) {
-    return this.q("SELECT COUNT(*) AS n FROM outbox WHERE status = 'sent' AND done_at >= ?").get(sec).n;
+    return this.q("SELECT COUNT(*) AS n FROM outbox WHERE (status = 'sent' AND done_at >= ?) OR status = 'sending'").get(sec).n;
+  }
+
+  /** At startup: a draft left in 'sending' was interrupted by a crash or kill; its delivery is unknown. */
+  failInterruptedSends(now = nowSec()) {
+    return this.q("UPDATE outbox SET status = 'failed', done_at = ?, error = 'interrupted: the daemon stopped while sending; delivery unknown' WHERE status = 'sending'")
+      .run(now).changes;
   }
 
   audit(action, detail = {}) {

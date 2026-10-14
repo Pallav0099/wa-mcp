@@ -48,7 +48,7 @@ export function statusText(r) {
   const me = r.me ? `${r.me.name || ''} ${r.me.pn || r.me.lid || ''}`.trim() : '—';
   const s = r.stats;
   const lines = [
-    `state:    ${r.state}${r.linked ? '' : '  (not linked — run: wa link)'}`,
+    `state:    ${r.state}${r.linked ? '' : '  (not linked — run in a terminal: wa connect)'}`,
     `account:  ${me}`,
     `store:    ${s.chats} chats · ${s.groups} groups · ${s.contacts} contacts · ${s.messages} messages (${s.liveMessages} live)`,
     `span:     ${formatTs(s.oldestTs, { withYear: true })} → ${formatTs(s.newestTs, { withYear: true })}`,

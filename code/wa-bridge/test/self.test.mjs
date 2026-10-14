@@ -1,4 +1,4 @@
-// The one unattended send path: the linked account's own chat, nothing else (vault decision 2026-09-27-wa-self-alerts).
+// The one unattended send path: the linked account's own chat, nothing else.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup, msg, fakeWa, PN, ME_PN } from './helpers.mjs';
@@ -44,6 +44,18 @@ test('a recipient in the request is ignored: it can never reach anyone else', as
     await r.outbox.sendSelf({ source: 'vault-health', text: 'hello', to: 'Alex', jid: PN('15550100002') });
     assert.equal(r.wa.sent[0].jid, ME_PN);
   } finally { r.cleanup(); }
+});
+
+test('a fresh install whose own chat is not in the store yet can still send to itself', async () => {
+  const t = setup();
+  Object.assign(t.cfg.sending, { selfUnattended: true });
+  const wa = fakeWa();
+  const outbox = new Outbox({ store: t.store, wa, ingest: t.ingest, cfg: t.cfg, log: silentLogger });
+  try {
+    const res = await outbox.sendSelf({ source: 'health-check', text: 'first alert' });
+    assert.equal(res.status, 'sent');
+    assert.equal(wa.sent[0].jid, ME_PN);
+  } finally { t.cleanup(); }
 });
 
 test('bad source labels and empty text are refused', async () => {
