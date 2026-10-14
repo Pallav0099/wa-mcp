@@ -60,6 +60,7 @@ test('QR link: image written, pairing restart, then open with identity', async (
 
     // the phone scanned: creds now carry "me", then WhatsApp asks for a restart
     r.wa.auth.state.creds.me = { id: '15550100001:7@s.whatsapp.net', lid: '100000000000001:7@lid', name: 'Owner' };
+    r.wa.auth.state.creds.account = { details: 'paired' };
     r.close(s1, DisconnectReason.restartRequired);
     await tick();
     assert.equal(r.sockets.length, 2, 'reconnected immediately after the pairing restart');
@@ -88,7 +89,7 @@ test('pairing-code link asks WhatsApp for a code for the given number', async ()
 test('a QR nobody asked for closes the socket instead of leaving a pairing window open', async () => {
   const r = rig();
   try {
-    r.wa.auth = { state: { creds: { me: { id: '9@s.whatsapp.net' } } }, saveCreds: async () => {} };
+    r.wa.auth = { state: { creds: { me: { id: '9@s.whatsapp.net' }, account: { details: 'paired' } } }, saveCreds: async () => {} };
     await r.wa.connect('test');
     const s = r.sockets[0];
     r.wa.auth.state.creds.me = undefined; // credentials invalidated
@@ -103,6 +104,7 @@ test('drop -> reconnecting with backoff; replaced -> stop; logged out -> credent
   try {
     await r.wa.init();
     r.wa.auth.state.creds.me = { id: '15550100001:7@s.whatsapp.net' };
+    r.wa.auth.state.creds.account = { details: 'paired' };
     await r.wa.connect('test');
     r.sockets[0].ev.emit('connection.update', { connection: 'open' });
     assert.equal(r.wa.state, 'open');
@@ -148,6 +150,7 @@ test('pause keeps the link; resume reconnects', async () => {
   try {
     await r.wa.init();
     r.wa.auth.state.creds.me = { id: '15550100001:7@s.whatsapp.net' };
+    r.wa.auth.state.creds.account = { details: 'paired' };
     await r.wa.connect('test');
     r.sockets[0].ev.emit('connection.update', { connection: 'open' });
     await r.wa.pause();

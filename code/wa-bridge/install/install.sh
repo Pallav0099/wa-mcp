@@ -9,7 +9,7 @@
 #
 # Nothing downloaded is run before it is verified:
 #   1. Node's tarball must match nodejs.org's SHASUMS256.txt AND this release's SHA256SUMS
-#   2. that Node checks the Ed25519 signature of SHA256SUMS against PUBKEY below
+#   2. that Node checks the Ed25519 signature of SHA256SUMS against one of PUBKEYS below
 #   3. the wa-bridge tarball must match SHA256SUMS
 #
 # Options / environment:
@@ -20,7 +20,9 @@
 #   WA_BRIDGE_HOME     data directory (default: $XDG_DATA_HOME/wa-bridge, i.e. ~/.local/share/wa-bridge)
 #   WA_BRIDGE_REPO, WA_BRIDGE_DOWNLOAD_URL, WA_BRIDGE_NODE_MIRROR   other download locations (mirrors, tests)
 
-PUBKEY='hjEXz90rJ8GyNNoCePO3a9Usd4xGcKMxDRkZOKo71EU='
+# Trusted release keys (Ed25519, raw 32 bytes, base64), space separated; the same list as TRUSTED_KEYS in
+# src/release.mjs. During a key rotation both keys are listed.
+PUBKEYS='hjEXz90rJ8GyNNoCePO3a9Usd4xGcKMxDRkZOKo71EU='
 REPO_DEFAULT='xrig-io/wa-bridge'
 
 say() { printf '%s\n' "$*"; }
@@ -47,20 +49,29 @@ sha256() {
 sum_of() { awk -v f="$1" '$2 == f || $2 == "*" f { print $1; exit }' "$2"; }
 
 VERIFY_JS='
-const [k, file, sigFile] = process.argv.slice(1);
+const [keys, file, sigFile] = process.argv.slice(1);
 const c = require("crypto"), fs = require("fs");
-const key = c.createPublicKey({ key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(k, "base64")]), format: "der", type: "spki" });
+const data = fs.readFileSync(file);
 const sig = Buffer.from(fs.readFileSync(sigFile, "utf8").trim(), "base64");
-process.exit(sig.length === 64 && c.verify(null, fs.readFileSync(file), key, sig) ? 0 : 1);
+const ok = sig.length === 64 && keys.split(/\s+/).filter(Boolean).some((k) => {
+  try {
+    const key = c.createPublicKey({ key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(k, "base64")]), format: "der", type: "spki" });
+    return c.verify(null, data, key, sig);
+  } catch { return false; }
+});
+process.exit(ok ? 0 : 1);
 '
 
 add_path_line() { # file
   [ -f "$1" ] && grep -q '# >>> wa-bridge >>>' "$1" && return 0
-  {
+  if ! {
     printf '\n# >>> wa-bridge >>>\n'
     printf 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac\n'
     printf '# <<< wa-bridge <<<\n'
-  } >> "$1"
+  } >> "$1" 2>/dev/null; then
+    warn "could not add ~/.local/bin to PATH in $1 (read-only?); add it yourself"
+    return 0
+  fi
   PATH_FILES="$PATH_FILES $1"
 }
 
@@ -115,7 +126,21 @@ main() {
   have sha256sum || have shasum || die "sha256sum is required"
 
   ROOT=${WA_BRIDGE_INSTALL:-$HOME/.wa-bridge}
-  DATA=${WA_BRIDGE_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/wa-bridge}
+  ROOT=${ROOT%/}
+  MARKER="$ROOT/.wa-bridge-install"
+  # never install into (and later uninstall) a directory that holds other things
+  if [ -d "$ROOT" ] && [ ! -f "$MARKER" ] && [ -n "$(ls -A "$ROOT" 2>/dev/null)" ]; then
+    die "$ROOT exists, is not empty and is not a wa-bridge install; set WA_BRIDGE_INSTALL to a new directory"
+  fi
+  # a re-run keeps the data directory the existing launcher pins, unless WA_BRIDGE_HOME says otherwise
+  PINNED=""
+  if [ -f "$ROOT/bin/wa-bridge" ]; then
+    PINNED=$(sed -n "s/^WA_BRIDGE_HOME='\(.*\)'\$/\1/p" "$ROOT/bin/wa-bridge" | head -n 1 | sed "s/'\\\\''/'/g")
+  fi
+  DATA=${WA_BRIDGE_HOME:-${PINNED:-${XDG_DATA_HOME:-$HOME/.local/share}/wa-bridge}}
+  DATA=${DATA%/}
+  if [ -n "$PINNED" ] && [ "$DATA" != "$PINNED" ]; then warn "the data directory changes from $PINNED to $DATA"; fi
+  case "$DATA/" in "$ROOT"/*) die "the data directory ($DATA) must not be inside the install root ($ROOT)" ;; esac
   BIN_DIR=$HOME/.local/bin
   REPO=${WA_BRIDGE_REPO:-$REPO_DEFAULT}
   if [ -n "${WA_BRIDGE_DOWNLOAD_URL:-}" ]; then URL=${WA_BRIDGE_DOWNLOAD_URL%/}
@@ -125,8 +150,13 @@ main() {
   NODE_MIRROR=${NODE_MIRROR%/}
 
   TMP=$(mktemp -d "${TMPDIR:-/tmp}/wa-bridge-install.XXXXXX")
-  trap 'rm -rf "$TMP"' EXIT
-  trap 'rm -rf "$TMP"; exit 130' INT TERM
+  NODE_STAGE=""
+  trap 'rm -rf "$TMP" ${NODE_STAGE:+"$NODE_STAGE"}' EXIT
+  trap 'rm -rf "$TMP" ${NODE_STAGE:+"$NODE_STAGE"}; exit 130' INT TERM
+
+  umask 022
+  mkdir -p "$ROOT/node"   # only what staging Node needs; the rest once everything is verified
+  [ -f "$MARKER" ] || printf 'wa-bridge install root (remove with: wa uninstall)\n' > "$MARKER"
 
   # ------------------------------------------------------------ what to install
   say "wa-bridge: reading the release at $URL"
@@ -153,13 +183,19 @@ main() {
     [ "$got" = "$(sum_of "$NODEF" "$TMP/NODE-SHASUMS256.txt")" ] || die "the Node tarball does not match nodejs.org's SHASUMS256.txt"
     [ "$got" = "$(sum_of "$NODEF" "$TMP/SHA256SUMS")" ] || die "the Node tarball does not match the wa-bridge release"
     ndir=${NODEF%.tar.gz}
-    tar -xzf "$TMP/$NODEF" -C "$TMP" "$ndir/bin/node" "$ndir/LICENSE"
-    NEW_NODE="$TMP/$ndir"
+    # unpacked next to its final place, not in $TMPDIR: /tmp is often noexec, or another filesystem
+    NODE_STAGE="$ROOT/node/.stage-$$"
+    rm -rf "$NODE_STAGE"
+    mkdir -p "$NODE_STAGE"
+    tar -xzf "$TMP/$NODEF" -C "$NODE_STAGE" "$ndir/bin/node" "$ndir/LICENSE"
+    NEW_NODE="$NODE_STAGE/$ndir"
     CHECK_NODE="$NEW_NODE/bin/node"
   fi
+  "$CHECK_NODE" --version >/dev/null 2>&1 \
+    || die "the Node runtime does not run here (is $ROOT on a noexec filesystem?); nothing was installed"
 
   # ------------------------------------------------------------ 2. the release signature
-  "$CHECK_NODE" -e "$VERIFY_JS" "$PUBKEY" "$TMP/SHA256SUMS" "$TMP/SHA256SUMS.sig" \
+  "$CHECK_NODE" -e "$VERIFY_JS" "$PUBKEYS" "$TMP/SHA256SUMS" "$TMP/SHA256SUMS.sig" \
     || die "the release signature is not valid (SHA256SUMS.sig); nothing was installed"
 
   # ------------------------------------------------------------ 3. wa-bridge itself
@@ -167,13 +203,14 @@ main() {
   fetch "$URL/$APP" "$TMP/$APP"
   [ "$(sha256 "$TMP/$APP")" = "$(sum_of "$APP" "$TMP/SHA256SUMS")" ] || die "the wa-bridge tarball does not match SHA256SUMS"
 
-  umask 022
-  mkdir -p "$ROOT/bin" "$ROOT/versions" "$ROOT/node"
   if [ -n "$NEW_NODE" ]; then
     mkdir -p "$ROOT/node/$NODEVER/bin"
     mv -f "$NEW_NODE/bin/node" "$ROOT/node/$NODEVER/bin/node"
     mv -f "$NEW_NODE/LICENSE" "$ROOT/node/$NODEVER/LICENSE"
+    rm -rf "$NODE_STAGE"
+    NODE_STAGE=""
   fi
+  mkdir -p "$ROOT/bin" "$ROOT/versions"
   STAGE="$ROOT/versions/.$VER.installing"
   rm -rf "$STAGE"
   mkdir -p "$STAGE"
@@ -218,8 +255,9 @@ EOF
   [ "$ON_PATH" = 1 ] || CMD="$ROOT/bin/wa-bridge"
   if [ "$ON_PATH" = 0 ] && [ "$MODIFY_PATH" = 1 ]; then
     add_path_line "$HOME/.profile"
-    { [ -f "$HOME/.bashrc" ] || [ "${SHELL##*/}" = bash ]; } && add_path_line "$HOME/.bashrc"
-    { [ -f "$HOME/.zshrc" ] || [ "${SHELL##*/}" = zsh ]; } && add_path_line "$HOME/.zshrc"
+    LOGIN_SHELL=${SHELL:-}
+    { [ -f "$HOME/.bashrc" ] || [ "${LOGIN_SHELL##*/}" = bash ]; } && add_path_line "$HOME/.bashrc"
+    { [ -f "$HOME/.zshrc" ] || [ "${LOGIN_SHELL##*/}" = zsh ]; } && add_path_line "$HOME/.zshrc"
     if have fish || [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/fish" ]; then
       fishconf="${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/wa-bridge.fish"
       if [ ! -f "$fishconf" ]; then

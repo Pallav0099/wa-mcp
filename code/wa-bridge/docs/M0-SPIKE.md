@@ -33,4 +33,12 @@ ECC **L** is used. The renderer wraps every line in ANSI white background / blac
 works in dark themes. `wa connect` needs about 57 columns × 35 rows (QR plus instructions) and falls
 back to the PNG path and the `--code` hint in smaller terminals.
 
-**Pending (needs a phone):** a real scan in kitty, GNOME Terminal, Konsole and tmux.
+The product draws the QR with its own renderer (`src/cli/qr.mjs`), using `QRCode.create()`'s module matrix,
+because qrcode's terminal mode leaves only a 1-module quiet zone. The quiet zone is 4 modules when the terminal
+allows (else 2, else 1), and every line is black on white.
+
+**Live check (2026-10-14).** A real daemon on Node v24.21.0 opened a link window. WhatsApp issued a QR about
+1 s later. `wa connect` drew it in a 100×50 PTY with the 4-module margin, and Ctrl-C closed the window
+(`state linking → unlinked, reason cancelled`). Nothing was linked.
+
+**Pending (needs a phone):** an actual scan in kitty, GNOME Terminal, Konsole and tmux.

@@ -59,7 +59,7 @@ async function disconnect(flags) {
       if (r.stillListedOnPhone) console.log('It may still be listed on the phone under Linked devices; remove it there.');
       return 0;
     } catch (e) {
-      if (!['unreachable', 'start_failed', 'not_started'].includes(e.code)) throw e;
+      if (!['unreachable', 'start_failed', 'not_started', 'stopped'].includes(e.code)) throw e;
       return unlinkOffline();
     }
   }

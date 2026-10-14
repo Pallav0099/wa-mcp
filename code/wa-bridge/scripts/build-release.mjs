@@ -29,9 +29,9 @@ const epoch = process.env.SOURCE_DATE_EPOCH
 
 // the installer must trust exactly the keys `wa update` trusts
 const installer = readFileSync(join(ROOT, 'install', 'install.sh'), 'utf8');
-const shKey = /^PUBKEY='([^']+)'/m.exec(installer)?.[1];
-if (!shKey || !TRUSTED_KEYS.includes(shKey)) {
-  console.error('install/install.sh PUBKEY is not one of src/release.mjs TRUSTED_KEYS; refusing to build');
+const shKeys = (/^PUBKEYS='([^']+)'/m.exec(installer)?.[1] || '').split(/\s+/).filter(Boolean);
+if (!shKeys.length || shKeys.length !== TRUSTED_KEYS.length || !shKeys.every((k) => TRUSTED_KEYS.includes(k))) {
+  console.error('install/install.sh PUBKEYS and src/release.mjs TRUSTED_KEYS differ; refusing to build');
   process.exit(1);
 }
 

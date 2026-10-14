@@ -48,10 +48,19 @@ export function resolveIds(ids, ctx, { forAdd }) {
   return AGENTS.filter((a) => out.includes(a)); // canonical order
 }
 
-/** Keep the original pre-wa-bridge backup across updates, so `remove` can still restore the untouched file. */
-function mergeRecord(prev, rec) {
-  if (prev?.file && rec?.file && prev.file === rec.file) return { ...rec, backup: prev.backup, created: prev.created };
-  return rec;
+/**
+ * What `remove` may restore. A backup is a valid restore point only if it predates wa-bridge's entry:
+ *  - first add of a missing entry: the new backup is the untouched file → keep it;
+ *  - update, and the file is exactly what we last wrote: carry the original pre-wa-bridge backup forward;
+ *  - update after the user edited the file (or of an entry we did not record): the only backup holds our old
+ *    entry, and restoring the original would drop the user's edits → no restore point, remove our entry only.
+ */
+function mergeRecord(prev, rec, { updated }) {
+  if (!updated) return rec;
+  if (prev?.file && rec?.file && prev.file === rec.file && rec.beforeSha256 && rec.beforeSha256 === prev.sha256) {
+    return { ...rec, backup: prev.backup, created: prev.created };
+  }
+  return { ...rec, backup: null, created: false };
 }
 
 export function addAgent(agent, ctx) {
@@ -62,7 +71,7 @@ export function addAgent(agent, ctx) {
   useSkill(ctx.manifest, dir, agent.id);
   const prev = ctx.manifest.agents[agent.id] || {};
   ctx.manifest.agents[agent.id] = {
-    mcp: res.record ? mergeRecord(prev.mcp, res.record) : prev.mcp || { via: 'existing' },
+    mcp: res.record ? mergeRecord(prev.mcp, res.record, { updated: res.mcp === 'updated' }) : prev.mcp || { via: 'existing' },
     skill: dir,
     addedAt: prev.addedAt || new Date().toISOString(),
     version: VERSION,

@@ -82,8 +82,13 @@ export class WhatsApp extends EventEmitter {
     this.auth = await useMultiFileAuthState(this.cfg.paths.auth);
   }
 
+  /**
+   * Linked = the phone completed pairing. `me` alone is not enough: Baileys writes creds.me as soon as a pairing
+   * code is REQUESTED (before the user typed it anywhere); only a successful pair-success also writes `account`.
+   */
   isLinked() {
-    return !!this.auth?.state?.creds?.me?.id;
+    const c = this.auth?.state?.creds;
+    return !!(c?.me?.id && c?.account);
   }
 
   adoptMeFromCreds() {
@@ -255,17 +260,19 @@ export class WhatsApp extends EventEmitter {
       this.setState('unlinked');
       return;
     }
-    if (this.link.method === 'code') {
-      if (this.link.codeRequested) return;
-      this.link.codeRequested = true;
-      sock.requestPairingCode(this.link.phone)
+    const link = this.link; // the window this QR belongs to; it may be cancelled before the promises below settle
+    if (link.method === 'code') {
+      if (link.codeRequested) return;
+      link.codeRequested = true;
+      sock.requestPairingCode(link.phone)
         .then((code) => {
+          if (this.link !== link) return;
           this.pairingCode = { code, at: nowSec() };
           this.log.info('pairing_code_issued');
           this.emit('pairing_code', code);
         })
         .catch((e) => {
-          this.link.error = e.message;
+          link.error = e.message;
           this.log.error('pairing_code_failed', { error: e });
         });
       return;
@@ -369,7 +376,7 @@ export class WhatsApp extends EventEmitter {
     }
     // Idempotent: a second caller (another terminal, an agent, a retry) joins the open window instead of
     // tearing down the socket the phone may be scanning right now.
-    if (this.link && !this.linkExpired() && this.link.method === method && this.link.phone === digits) {
+    if (this.link && !this.linkExpired() && !this.link.error && this.link.method === method && this.link.phone === digits) {
       await waitFor(() => this.qr || this.pairingCode || this.link?.error || this.linkError || this.state === 'open', 30_000);
       return this.linkStatus();
     }
@@ -388,6 +395,7 @@ export class WhatsApp extends EventEmitter {
 
   endLink(reason) {
     clearTimeout(this.linkTimer);
+    clearTimeout(this.reconnectTimer); // a reconnect scheduled during the window must not reopen it
     this.link = null;
     this.qr = null;
     this.pairingCode = null;

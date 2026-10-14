@@ -1,5 +1,18 @@
 # WA Bridge — Blueprint and Code Package
 
+> **Product status (2026-10-14): `code/wa-bridge/` is now the installable Linux product, v0.2.0.**
+>
+> - **Install:** `curl … | sh` installs it.
+> - **Link:** `wa connect` links WhatsApp with a QR code drawn in the terminal.
+> - **Agents:** `wa agents add all` adds the MCP server and skill to Claude Code, Codex, OpenCode or Hermes Agent.
+> - **Unchanged:** the functionality, the 16 tools and the draft → approval → confirm rule are the same as below.
+>
+> Start with [`code/wa-bridge/README.md`](code/wa-bridge/README.md); releasing:
+> [`code/wa-bridge/docs/RELEASING.md`](code/wa-bridge/docs/RELEASING.md). The documents in this folder describe
+> the original Windows reference deployment (v0.1) and remain the design reference. Their known gaps (architecture
+> §17) are resolved in the product, except Windows and macOS support, which are not shipped yet. Git history: the
+> first commit is this package exactly as handed over.
+
 A rebuild-grade description of **WA Bridge** (`wa-bridge`), the local WhatsApp gateway that Claude
 Code uses to read, search and send WhatsApp messages on the reference workstation (a single Windows 11
 PC), plus its scrubbed source. Audience: the team that will productize it. Everything personal
@@ -49,7 +62,8 @@ package.
 | `WA-BRIDGE-SETUP.md` | Exact 1:1 setup on a new Windows machine: pinned Node, `npm ci`, `config.json` overrides, linking (QR / pairing code), the Chrome-identity fix, the autostart/watchdog task, MCP registration at user scope, the backup task, verification, removal. |
 | `SECURITY-AND-PRIVACY.md` | Threat model, never-back-up / never-share list, token handling, the human-approval rule, ToS / ban-risk notes. |
 | `PRIVACY-AUDIT.md` | The final scan of this folder: patterns searched, every hit, how each was resolved. |
-| `code/wa-bridge/` | Scrubbed source (src, bin, scripts, test, package.json, package-lock.json, README). No node_modules, no .git, no data. **53/53 tests pass on the scrubbed copy.** |
+| `code/wa-bridge/` | The product (v0.2.0, Linux): source, installer, release scripts, skill, 120+ tests. Started from the scrubbed v0.1 source, on which 53/53 tests passed. |
+| `.github/workflows/` | CI (tests on x64/arm64 × Node 22/24, end-to-end install, distro matrix) and the signed release pipeline. |
 | `code/wa_self.py` | A client of the bridge API: sends a labelled text to the owner's own chat via `POST /send/self` (exit 0 = sent). |
 
 ## Placeholders used throughout

@@ -3,6 +3,45 @@
 Scope: WA Bridge as deployed on a single-user Windows workstation, and its clients (the `wa` CLI, the
 MCP server, `code/wa_self.py`). Read together with `WA-BRIDGE-ARCHITECTURE.md` §9 and §17.
 
+## 0. The Linux product (v0.2, 2026-10-14)
+
+Sections 1–7 below still hold. In the installable product, these properties were added or changed:
+
+- **Approval: unchanged by decision.** Confirming a draft is still enforced by the agent following
+  instructions, not by the bridge. The decision of 2026-10-14 keeps today's behaviour for every agent.
+  - The rule is repeated in the tool descriptions, the MCP server instructions and the skill installed into
+    each agent.
+  - The skill tells unattended runs (scheduled sessions, `codex exec`, Hermes cron) to stop at the draft.
+  - Any agent with the tools or a shell *can* confirm its own draft. Phone approval and per-agent policy are the
+    planned next step. When built, approvals must ignore message ids in `outbox.sent_id` and messages from the
+    bridge's own device, so `wa notify` cannot approve itself.
+- **Consent.** `wa connect` states before linking that this is an unofficial client with a small risk to the
+  account, and that agents can read the chats.
+- **File privacy.**
+  - The data directory is created and kept at 0700, and the daemon runs with umask 077 (files that v0.1 left
+    0644 are no longer readable by other local users).
+  - The token stays 0600, is read at call time, and is never written into an agent's config.
+  - The launcher pins the data directory, so the service, the shell and all agents use the same one.
+- **Supply chain.**
+  - Releases are reproducible tarballs per CPU architecture. Dependencies are exact pins, and install scripts are
+    denied (`allowScripts`) and never run on users' machines.
+  - The installer verifies Node against nodejs.org's `SHASUMS256.txt` **and** the release's signed list *before
+    running it*. It then uses that Node to verify the Ed25519 signature of `SHA256SUMS`, then the app tarball.
+  - `wa update` does the same.
+  - The signing key's public half is in `src/release.mjs` / `install.sh`. The private half belongs in the CI
+    secret `WA_BRIDGE_SIGNING_KEY` and a password manager only (see `code/wa-bridge/docs/RELEASING.md`).
+- **Other programs' configs.** Agent installers edit Claude Code, Codex, OpenCode and Hermes configuration.
+  They back up first (0600: those files hold API keys), write atomically, keep modes and symlinks, re-parse the
+  result, and never touch another program's `wa` server. Removal restores an unchanged file byte for byte.
+- **Lifecycle.**
+  - Crash → exit 1 → systemd restarts it.
+  - `wa stop` is respected: agents' tool calls do not restart a stopped daemon.
+  - A send interrupted by a crash is marked failed ("delivery unknown") rather than left pending.
+  - A store written by a newer schema is never opened by older code.
+- **Removal.** `wa uninstall --purge` unlinks the device on WhatsApp's side before deleting the data. Deleting
+  files alone never removes the device from the phone's list.
+- **Backups.** `wa backup` copies only the store, verified, into a 0700 directory. Never `auth/` or the token.
+
 ## 1. Assets
 
 | Asset | Where | Why it matters |

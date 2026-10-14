@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { compareVersions, parseSums, rawPublicKey, signSums, verifySums, TRUSTED_KEYS, downloadUrl } from '../src/release.mjs';
 import { pruneInstall, switchLink, linkedVersion } from '../src/install-layout.mjs';
-import { stripPathBlock } from '../src/cli/uninstall.mjs';
+import { stripPathBlock, removeInstallTree } from '../src/cli/uninstall.mjs';
 
 const SUMS = `${'a'.repeat(64)}  wa-bridge-0.3.0-linux-x64.tar.gz
 ${'b'.repeat(64)}  wa-bridge-0.3.0-linux-arm64.tar.gz
@@ -29,11 +29,11 @@ test('signatures: valid for the signer only; any change to the list breaks it', 
   assert.equal(verifySums(SUMS, sig, ['short']), false, 'a malformed key is simply not trusted');
 });
 
-test('the shipped trusted key and the installer key agree', () => {
+test('the installer trusts exactly the keys `wa update` trusts', () => {
   const sh = readFileSync(new URL('../install/install.sh', import.meta.url), 'utf8');
-  const key = /^PUBKEY='([^']+)'/m.exec(sh)[1];
-  assert.ok(TRUSTED_KEYS.includes(key));
-  assert.equal(Buffer.from(key, 'base64').length, 32);
+  const keys = /^PUBKEYS='([^']+)'/m.exec(sh)[1].split(/\s+/).filter(Boolean);
+  assert.deepEqual([...keys].sort(), [...TRUSTED_KEYS].sort());
+  for (const k of keys) assert.equal(Buffer.from(k, 'base64').length, 32);
 });
 
 test('SHA256SUMS names the version, the Node runtime and the file per architecture', () => {
@@ -90,3 +90,25 @@ test('uninstall removes exactly the PATH block the installer appended', () => {
 });
 
 
+
+test('uninstall deletes only what the installer created; a shared directory and its other files survive', () => {
+  const base = mkdtempSync(join(tmpdir(), 'wab-root-'));
+  try {
+    const shared = join(base, 'shared'); // e.g. WA_BRIDGE_INSTALL=~/.local by mistake
+    for (const d of ['bin', 'versions/0.2.0/bin', 'node/v24.21.0/bin', 'share/other-app']) mkdirSync(join(shared, d), { recursive: true });
+    for (const f of ['bin/wa-bridge', 'bin/other-tool', 'share/other-app/data.db', '.wa-bridge-install']) writeFileSync(join(shared, f), 'x');
+    switchLink(shared, 'current', '0.2.0');
+    removeInstallTree(shared);
+    assert.ok(existsSync(join(shared, 'bin', 'other-tool')) && existsSync(join(shared, 'share', 'other-app', 'data.db')), 'other files untouched');
+    assert.ok(!existsSync(join(shared, 'versions')) && !existsSync(join(shared, 'bin', 'wa-bridge')) && !existsSync(join(shared, 'current')));
+
+    const own = join(base, 'own'); // the normal case: ~/.wa-bridge disappears completely
+    mkdirSync(join(own, 'bin'), { recursive: true });
+    mkdirSync(join(own, 'versions', '0.2.0'), { recursive: true });
+    mkdirSync(join(own, '.update-abc'));
+    writeFileSync(join(own, 'bin', 'wa-bridge'), 'x');
+    writeFileSync(join(own, '.wa-bridge-install'), 'x');
+    removeInstallTree(own);
+    assert.equal(existsSync(own), false);
+  } finally { rmSync(base, { recursive: true, force: true }); }
+});

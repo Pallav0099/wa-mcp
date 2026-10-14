@@ -22,6 +22,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (n) => { const i = process.argv.indexOf(`--${n}`); return i > 0 ? process.argv[i + 1] : null; };
 const flag = (n) => process.argv.includes(`--${n}`);
 const nodeVersion = `v${readFileSync(join(ROOT, '.node-version'), 'utf8').trim().replace(/^v/, '')}`;
+// the "next" release runs on a different Node, so `wa update` has to install a new runtime (like a real bump)
+const nextNode = arg('next-node') || (nodeVersion === 'v22.23.2' ? 'v24.21.0' : 'v22.23.2');
 const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
 const work = mkdtempSync(join(tmpdir(), 'wab-install-test-'));
 let failures = 0;
@@ -56,7 +58,7 @@ try {
   const keyFile = join(work, 'test-key.pem');
   writeFileSync(keyFile, privateKey.export({ format: 'pem', type: 'pkcs8' }), { mode: 0o600 });
   const patch = (file, re, to) => writeFileSync(join(src, file), readFileSync(join(src, file), 'utf8').replace(re, to));
-  patch('install/install.sh', /^PUBKEY='[^']+'/m, `PUBKEY='${pub}'`);
+  patch('install/install.sh', /^PUBKEYS='[^']+'/m, `PUBKEYS='${pub}'`);
   patch('src/release.mjs', /export const TRUSTED_KEYS = \[[^\]]*\]/, `export const TRUSTED_KEYS = ['${pub}']`);
   run('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: src, stdio: ['ignore', 'ignore', 'inherit'] });
 
@@ -66,15 +68,18 @@ try {
   const next = `${maj}.${min}.${pat + 1}`;
   const www = join(work, 'www');
   const nodeCache = arg('node-cache');
-  const nodeDir = join(www, 'node', nodeVersion);
-  mkdirSync(nodeDir, { recursive: true });
-  const nodeTar = `node-${nodeVersion}-linux-${arch}.tar.gz`;
-  for (const f of [nodeTar, 'SHASUMS256.txt']) {
-    const cached = nodeCache && [join(nodeCache, f), join(nodeCache, f === 'SHASUMS256.txt' ? `SHASUMS256-${nodeVersion}.txt` : f)].find(existsSync);
-    if (cached) cpSync(cached, join(nodeDir, f));
-    else run('curl', ['-fsSL', '-o', join(nodeDir, f), `https://nodejs.org/dist/${nodeVersion}/${f}`]);
+  for (const nv of [nodeVersion, nextNode]) {
+    const nodeDir = join(www, 'node', nv);
+    mkdirSync(nodeDir, { recursive: true });
+    for (const f of [`node-${nv}-linux-${arch}.tar.gz`, 'SHASUMS256.txt']) {
+      const cached = nodeCache && [join(nodeCache, f), join(nodeCache, f === 'SHASUMS256.txt' ? `SHASUMS256-${nv}.txt` : f)].find(existsSync);
+      if (cached) cpSync(cached, join(nodeDir, f));
+      else run('curl', ['-fsSL', '-o', join(nodeDir, f), `https://nodejs.org/dist/${nv}/${f}`]);
+    }
   }
-  for (const v of [version, next]) {
+  for (const [v, nv] of [[version, nodeVersion], [next, nextNode]]) {
+    writeFileSync(join(src, '.node-version'), nv.slice(1) + '\n');
+    const nodeDir = join(www, 'node', nv);
     const out = join(www, `v${v}`);
     run(process.execPath, [join(src, 'scripts', 'build-release.mjs'), '--arch', arch, '--out', out, '--version', v], { cwd: src, stdio: ['ignore', 'inherit', 'inherit'] });
     cpSync(join(src, 'install', 'install.sh'), join(out, 'install.sh'));
@@ -130,7 +135,7 @@ try {
   cpSync(join(www, `v${version}`), tampered, { recursive: true });
   writeFileSync(join(tampered, 'SHA256SUMS'), readFileSync(join(tampered, 'SHA256SUMS'), 'utf8').replace(/^[0-9a-f]/, (c) => (c === '0' ? '1' : '0')));
   r = await sh({ WA_BRIDGE_DOWNLOAD_URL: `${base}/tampered`, WA_BRIDGE_INSTALL: join(home, 'other-root') });
-  ok(r.status !== 0 && /signature is not valid/.test(r.stderr) && !existsSync(join(home, 'other-root', 'versions')), 'a tampered SHA256SUMS is refused before anything is installed');
+  ok(r.status !== 0 && /signature is not valid/.test(r.stderr) && !existsSync(join(home, 'other-root', 'versions')) && !existsSync(join(home, 'other-root', 'bin', 'wa-bridge')) && !existsSync(join(home, 'other-root', 'node', nodeVersion)), `a tampered SHA256SUMS is refused before anything is installed${r.status === 0 ? '' : ''}`);
 
   r = await wa(['start', '--no-service']);
   ok(r.status === 0, `wa start (detached)${r.status ? `: ${r.stderr}` : ''}`);
@@ -145,17 +150,24 @@ try {
   r = await wa(['update'], { WA_BRIDGE_DOWNLOAD_URL: urls.next });
   ok(r.status === 0 && readlinkSync(join(home, '.wa-bridge', 'current')) === `versions/${next}`, `wa update → ${next}${r.status ? `\n${r.stdout}\n${r.stderr}` : ''}`);
   ok(readlinkSync(join(home, '.wa-bridge', 'previous')) === `versions/${version}`, 'previous → the old version');
-  ok(JSON.parse((await wa(['version', '--json'])).stdout).version === next, 'the launcher runs the new version');
+  const vNext = JSON.parse((await wa(['version', '--json'])).stdout);
+  ok(vNext.version === next && vNext.node === nextNode, `the launcher runs the new version on its new Node (${vNext.node})`);
+  ok(existsSync(join(home, '.wa-bridge', 'node', nodeVersion)) && existsSync(join(home, '.wa-bridge', 'node', nextNode)), 'both runtimes kept while the previous release is kept');
   ok(/state: +unlinked/.test((await wa(['status'])).stdout), 'the daemon came back after the update');
   r = await wa(['update'], { WA_BRIDGE_DOWNLOAD_URL: urls.next });
   ok(r.status === 0 && /up to date/.test(r.stdout), 'a second update is a no-op');
 
   r = await wa(['update', '--rollback']);
-  ok(r.status === 0 && JSON.parse((await wa(['version', '--json'])).stdout).version === version, `wa update --rollback → ${version}${r.status ? `\n${r.stdout}\n${r.stderr}` : ''}`);
+  const vBack = JSON.parse((await wa(['version', '--json'])).stdout || '{}');
+  ok(r.status === 0 && vBack.version === version && vBack.node === nodeVersion, `wa update --rollback → ${version} on ${vBack.node}${r.status ? `\n${r.stdout}\n${r.stderr}` : ''}`);
+  ok(/state: +unlinked/.test((await wa(['status'])).stdout), 'the daemon came back after the rollback');
 
+  writeFileSync(join(home, '.wa-bridge', 'my-notes.txt'), 'not wa-bridge\'s'); // must survive uninstall
   r = await wa(['uninstall', '--yes']);
   ok(r.status === 0, `wa uninstall${r.status ? `\n${r.stdout}\n${r.stderr}` : ''}`);
-  ok(!existsSync(join(home, '.wa-bridge')), '~/.wa-bridge removed');
+  ok(!existsSync(join(home, '.wa-bridge', 'versions')) && !existsSync(join(home, '.wa-bridge', 'bin', 'wa-bridge')), 'the install is removed');
+  ok(readFileSync(join(home, '.wa-bridge', 'my-notes.txt'), 'utf8') === 'not wa-bridge\'s', 'a file wa-bridge did not create is left alone');
+  rmSync(join(home, '.wa-bridge', 'my-notes.txt'));
   ok(!existsSync(join(home, '.local', 'bin', 'wa')), 'alias removed');
   ok(!readFileSync(join(home, '.profile'), 'utf8').includes('wa-bridge'), 'PATH line removed');
   ok(existsSync(join(home, '.local', 'share', 'wa-bridge', 'wa.sqlite')), 'data kept without --purge');

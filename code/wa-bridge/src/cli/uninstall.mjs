@@ -4,7 +4,7 @@
 //   → ~/.wa-bridge. The data directory (credentials, messages) stays unless --purge, and --purge first unlinks
 //   the device on WhatsApp's side, because deleting local data never removes it from the phone's list.
 
-import { existsSync, lstatSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { call, clientConfig, ensureDaemon, stoppedFlag } from '../client.mjs';
@@ -14,6 +14,19 @@ import { systemdAvailable, uninstallUnit, unitInstalled, unitPath } from '../ser
 import { confirm } from './prompt.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const INSTALL_ENTRIES = ['bin/wa-bridge', 'bin/.wa-bridge.tmp', 'versions', 'node', 'current', 'previous', '.current.tmp', '.previous.tmp', '.wa-bridge-install'];
+
+/** Delete what the installer created under root (never anything else), then root itself when it is empty. */
+export function removeInstallTree(root) {
+  for (const e of INSTALL_ENTRIES) rmSync(join(root, e), { recursive: true, force: true });
+  if (existsSync(root)) {
+    for (const f of readdirSync(root)) if (/^\.update-/.test(f)) rmSync(join(root, f), { recursive: true, force: true });
+    for (const d of [join(root, 'bin'), root]) {
+      try { if (!readdirSync(d).length) rmdirSync(d); } catch { /* not empty or gone */ }
+    }
+  }
+}
 
 /** Remove the block install.sh appended to a shell rc file (a blank line + the marked lines), leaving the rest as it was. */
 export function stripPathBlock(text) {
@@ -33,6 +46,7 @@ export async function uninstallCommand(pos, flags, { line = (s = '') => console.
   if (flags.purge) {
     try {
       if (existsSync(paths.auth) && !(token && (await ourDaemonAnswers(port, token)))) {
+        rmSync(stoppedFlag(paths), { force: true }); // the daemon would honour a `wa stop` and exit at once
         await ensureDaemon({ ignoreStopped: true }); // WhatsApp can only be told while connected
       }
       let h = await call('GET', '/health');
@@ -64,12 +78,15 @@ export async function uninstallCommand(pos, flags, { line = (s = '') => console.
   }
 
   // 3. service / daemon
-  if (unitInstalled() && systemdAvailable()) {
+  // the unit files go even without a reachable user bus (su, plain SSH): a unit left behind would point at a
+  // deleted launcher and fail at every login
+  if (unitInstalled()) {
+    if (!systemdAvailable()) line('! the systemd user session is not reachable; removing the unit files anyway (run `systemctl --user daemon-reload` in a login session)');
     uninstallUnit();
     line(`✓ removed the background service (${unitPath()})`);
   }
   const { unscheduleBackups } = await import('./backup.mjs');
-  if (systemdAvailable() && unscheduleBackups()) line('✓ removed the daily backup timer (existing backups are kept)');
+  if (unscheduleBackups()) line('✓ removed the daily backup timer (existing backups are kept)');
   if (token && (await ourDaemonAnswers(port, token))) {
     await call('POST', '/shutdown').catch(() => {});
     line('✓ stopped the daemon');
@@ -91,9 +108,11 @@ export async function uninstallCommand(pos, flags, { line = (s = '') => console.
       const p = join(home, '.local', 'bin', name);
       try { if (lstatSync(p).isSymbolicLink() && readlinkSync(p) === layout.launcher) { rmSync(p); line(`✓ removed ${p}`); } } catch { /* not there */ }
     }
-    // 5. the install itself (this process keeps running from it until it exits; that is fine on Linux)
-    rmSync(layout.root, { recursive: true, force: true });
-    line(`✓ removed ${layout.root}`);
+    // 5. the install itself: only what install.sh / wa update create, then the root if that left it empty
+    //    (WA_BRIDGE_INSTALL may point at a directory with other things in it; those are never touched).
+    //    This process keeps running from the deleted files until it exits; that is fine on Linux.
+    removeInstallTree(layout.root);
+    line(existsSync(layout.root) ? `✓ removed wa-bridge from ${layout.root} (other files there were left alone)` : `✓ removed ${layout.root}`);
   } else {
     line('· running from a source checkout: the checkout itself is left alone');
   }

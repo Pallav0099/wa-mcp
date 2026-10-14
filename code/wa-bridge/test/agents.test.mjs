@@ -377,3 +377,23 @@ test('print: ready-to-paste snippets for any other MCP client', () => {
   assert.deepEqual(parseDocument(snippet('yaml', env)).toJSON().mcp_servers.wa, { command: process.execPath, args: ['mcp'] });
   assert.throws(() => snippet('xml', env), /usage/);
 });
+
+test('a file the user edited after our add is never deleted or reverted by a later update + remove', () => {
+  const s = sandbox();
+  try {
+    mkdirSync(join(s.home, '.codex'));
+    const file = join(s.home, '.codex', 'config.toml');
+    addAgents([byId('codex')], s.ctx()); // creates config.toml
+    writeFileSync(file, readFileSync(file, 'utf8') + '\nmodel = "o3"\n'); // the user's own setting
+    const moved = join(s.root, 'moved-wa-bridge');
+    writeFileSync(moved, '#!/bin/sh\n');
+    const env2 = { ...s.env, WA_BRIDGE_LAUNCHER: moved };
+    assert.equal(addAgents([byId('codex')], makeContext({ env: env2, run: runQuiet }))[0].mcp, 'updated');
+    const [rm] = removeAgents([byId('codex')], makeContext({ env: env2, run: runQuiet }));
+    assert.notEqual(rm.how, 'deleted');
+    assert.ok(existsSync(file), 'the file survives');
+    const text = readFileSync(file, 'utf8');
+    assert.match(text, /model = "o3"/, "the user's setting survives");
+    assert.doesNotMatch(text, /mcp_servers\.wa/, 'our entry is gone');
+  } finally { s.cleanup(); }
+});

@@ -101,6 +101,7 @@ export function unscheduleBackups({ env = process.env, run = runQuiet } = {}) {
   run('systemctl', ['--user', 'disable', '--now', TIMER]);
   rmSync(join(dir, TIMER), { force: true });
   rmSync(join(dir, TIMER_SERVICE), { force: true });
+  rmSync(join(dir, 'timers.target.wants', TIMER), { force: true });
   run('systemctl', ['--user', 'daemon-reload']);
   return true;
 }

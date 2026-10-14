@@ -12,6 +12,7 @@ import { silentLogger } from '../src/log.mjs';
 
 function rig() {
   const t = setup();
+  let wa;
   const sockets = [];
   const factory = (opts) => {
     const ev = new EventEmitter();
@@ -19,13 +20,14 @@ function rig() {
       opts, ev, ended: false,
       user: { id: '15550100001:7@s.whatsapp.net', lid: '100000000000001:7@lid', name: 'Owner' },
       end() { this.ended = true; },
-      async requestPairingCode() { return 'ABCD1234'; },
+      // like Baileys: requesting a code already writes creds.me (but not creds.account)
+      async requestPairingCode(phone) { wa.auth.state.creds.me = { id: `${phone}@s.whatsapp.net`, name: '~' }; return 'ABCD1234'; },
       async groupFetchAllParticipating() { return {}; },
     };
     sockets.push(sock);
     return sock;
   };
-  const wa = new WhatsApp({ cfg: t.cfg, store: t.store, ingest: t.ingest, log: silentLogger, socketFactory: factory });
+  wa = new WhatsApp({ cfg: t.cfg, store: t.store, ingest: t.ingest, log: silentLogger, socketFactory: factory });
   wa.waVersion = null;
   const close = (sock, code) => sock.ev.emit('connection.update', { connection: 'close', lastDisconnect: { error: new Boom('x', { statusCode: code }), date: new Date() } });
   return { ...t, wa, sockets, close, stop: async () => { await wa.stop(); t.cleanup(); } };
@@ -36,6 +38,7 @@ const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 async function openLinked(r) {
   await r.wa.init();
   r.wa.auth.state.creds.me = { id: '15550100001:7@s.whatsapp.net' };
+  r.wa.auth.state.creds.account = { details: 'paired' };
   await r.wa.connect('test');
   r.sockets.at(-1).ev.emit('connection.update', { connection: 'open' });
 }
@@ -53,6 +56,8 @@ test('link status carries the raw QR payload for the terminal; the image is remo
     assert.equal(r.wa.status().link.qr.data, '2@payload-one', '/health carries it too (token holders only)');
 
     r.wa.auth.state.creds.me = { id: '15550100001:7@s.whatsapp.net' };
+
+    r.wa.auth.state.creds.account = { details: 'paired' };
     r.close(r.sockets[0], DisconnectReason.restartRequired);
     await tick();
     r.sockets[1].ev.emit('connection.update', { connection: 'open', isNewLogin: true });
@@ -127,5 +132,25 @@ test('history sync progress is visible in status', async () => {
     assert.equal(s.chunks, 1);
     assert.equal(s.progress, 40);
     assert.ok(s.lastChunkAt > 0);
+  } finally { await r.stop(); }
+});
+
+test('requesting a pairing code is not being linked: cancel works and a retry starts a fresh window', async () => {
+  const r = rig();
+  try {
+    await r.wa.init();
+    const p = r.wa.startLink({ method: 'code', phone: '15550100001' });
+    await tick();
+    r.sockets[0].ev.emit('connection.update', { qr: 'ignored-for-code' });
+    const st = await p;
+    assert.equal(st.pairingCode.code, 'ABCD1234');
+    assert.ok(r.wa.auth.state.creds.me, 'Baileys wrote creds.me');
+    assert.equal(r.wa.isLinked(), false, 'but nothing is linked until pair-success');
+    assert.equal(r.wa.cancelLink().state, 'unlinked', 'so the window can be cancelled');
+    assert.equal(r.sockets[0].ended, true);
+    const again = r.wa.startLink({ method: 'qr' });
+    await tick();
+    r.sockets.at(-1).ev.emit('connection.update', { qr: '2@fresh' });
+    assert.equal((await again).qr.data, '2@fresh', 'and a new link can start, no already_linked');
   } finally { await r.stop(); }
 });

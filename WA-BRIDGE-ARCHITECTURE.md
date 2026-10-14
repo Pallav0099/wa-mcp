@@ -1,5 +1,9 @@
 # WA Bridge — Architecture
 
+> This document describes v0.1, the Windows reference deployment, and remains the design reference: the store,
+> ingest, outbox, API and MCP tools are unchanged in the Linux product (v0.2, `code/wa-bridge/README.md`). Product
+> additions are listed at the end of §17.
+
 Source: `code/wa-bridge/` (scrubbed copy of the private git repo; 7 commits, version `0.1.0`).
 All statements below are read from the code unless marked *(deployment)*, meaning they come from the
 reference machine's scheduled tasks or operating records.
@@ -618,3 +622,23 @@ Result on the scrubbed package (2026-10-10, Node v22.23.2): **53 pass, 0 fail**.
 7. Baileys 7.0.0 is a **release candidate** and an unofficial client; upgrades must be deliberate
    (tests, then one live `wa status` + read).
 8. Voice sending depends on an `ffmpeg` on PATH (not bundled).
+
+### Resolved in the Linux product (v0.2)
+
+1. README rewritten. Group create/update is documented.
+2. Autostart and watchdog: a systemd user unit with `Restart=on-failure`. Crashes now exit 1 (v0.1 exited 0 on a
+   crash, so no supervisor would have restarted it).
+3. `stop.ps1` and the PATH problem: `wa stop` / `wa start` go through systemd. The launcher runs the private Node.
+4. Backups: `wa backup` uses the data dir, local time, a configurable destination and an optional user timer.
+5. Log retention (`log.keepDays`, 30), `baileys.log` rotation, and QR image cleanup.
+6. Single-user design: kept on purpose. The data dir is now 0700 with umask 077, and the launcher pins it.
+7. Baileys stays pinned. Upgrades go through tests, a signed release, and `wa update` with automatic rollback.
+8. ffmpeg: `wa doctor` reports when it is missing.
+
+Also fixed:
+- `/send/self` on a fresh install (`unknown_chat`).
+- Rate caps now count sends that are still in flight.
+- Drafts stuck in `sending` after a crash.
+- The dead end in the `replaced` / `forbidden` states (`wa disconnect --local`).
+- A non-idempotent `POST /link`.
+- History-sync progress is now visible in `/health`.

@@ -7,7 +7,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { call, clientConfig } from '../client.mjs';
 import { defaultDataDir } from '../config.mjs';
@@ -31,6 +30,16 @@ async function daemonUp() {
   return !!c.token && ourDaemonAnswers(c.port, c.token);
 }
 
+/** The daemon answers AND runs `version` (an old daemon that never restarted does not count). */
+async function daemonRuns(version) {
+  try {
+    const c = clientConfig(undefined, { requireToken: false });
+    if (!c.token) return false;
+    const res = await fetch(`http://127.0.0.1:${c.port}/health`, { headers: { authorization: `Bearer ${c.token}` }, signal: AbortSignal.timeout(1500) });
+    return res.ok && (await res.json()).version === version;
+  } catch { return false; }
+}
+
 async function waitFor(pred, ms) {
   const until = Date.now() + ms;
   while (Date.now() < until) { if (await pred()) return true; await sleep(300); }
@@ -44,11 +53,14 @@ async function snapshotStore(fromVersion, line) {
   if (!existsSync(db)) return null;
   const dir = join(dataDir, 'pre-update');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const dest = join(dir, `wa-${fromVersion}-${new Date().toISOString().replace(/[-:]/g, '').slice(0, 15)}.sqlite`);
+  // timestamp first, so names sort by time whatever the version numbers
+  const dest = join(dir, `${new Date().toISOString().replace(/[-:]/g, '').slice(0, 15)}-v${fromVersion}.sqlite`);
   const { DatabaseSync, backup } = await import('node:sqlite');
   const src = new DatabaseSync(db, { readOnly: true });
-  try { await backup(src, dest); } finally { src.close(); }
-  for (const f of readdirSync(dir).filter((x) => x.endsWith('.sqlite')).sort().reverse().slice(2)) rmSync(join(dir, f), { force: true });
+  // one step (one read transaction): a busy daemon cannot keep restarting the copy; WAL lets it write meanwhile
+  try { await backup(src, dest, { rate: 2147483647 }); } finally { src.close(); }
+  const older = readdirSync(dir).filter((x) => x.endsWith('.sqlite') && join(dir, x) !== dest).sort().reverse().slice(1);
+  for (const f of older) rmSync(join(dir, f), { force: true });
   line(`  store snapshot: ${dest}`);
   return dest;
 }
@@ -73,12 +85,14 @@ export async function updateCommand(pos, flags, { line = (s = '') => console.log
   if (wanted && next !== wanted) throw new Error(`asked for ${wanted} but the release is ${next}`);
   if (!wanted && !flags.force && compareVersions(next, VERSION) <= 0) { line(`wa-bridge ${VERSION} is up to date`); return 0; }
 
-  const tmp = mkdtempSync(join(tmpdir(), 'wa-bridge-update-'));
+  // inside the install root: same filesystem as the final place (renames never cross devices), and not /tmp
+  // (often noexec)
+  const tmp = mkdtempSync(join(layout.root, '.update-'));
   try {
     // Node: reuse when present, else nodejs.org, checked against nodejs.org and the signed list
     const nodeVersion = sums.node;
     const nodeBin = nodeBinary(layout, nodeVersion);
-    const haveNode = existsSync(nodeBin) && spawnSync(nodeBin, ['--version'], { encoding: 'utf8' }).stdout.trim() === nodeVersion;
+    const haveNode = existsSync(nodeBin) && spawnSync(nodeBin, ['--version'], { encoding: 'utf8' }).stdout?.trim() === nodeVersion;
     if (!haveNode) {
       line(`downloading Node ${nodeVersion}`);
       const tgz = await download(`${nodeMirror(env)}/${nodeVersion}/${nodeFile}`);
@@ -89,6 +103,7 @@ export async function updateCommand(pos, flags, { line = (s = '') => console.log
       writeFileSync(join(tmp, nodeFile), tgz);
       const dir = nodeFile.replace(/\.tar\.gz$/, '');
       execFileSync('tar', ['-xzf', join(tmp, nodeFile), '-C', tmp, `${dir}/bin/node`, `${dir}/LICENSE`]);
+      if (spawnSync(join(tmp, dir, 'bin', 'node'), ['--version']).status !== 0) throw new Error(`Node ${nodeVersion} does not run on this machine`);
       mkdirSync(join(layout.node, nodeVersion, 'bin'), { recursive: true });
       renameSync(join(tmp, dir, 'bin', 'node'), nodeBin);
       renameSync(join(tmp, dir, 'LICENSE'), join(layout.node, nodeVersion, 'LICENSE'));
@@ -110,14 +125,18 @@ export async function updateCommand(pos, flags, { line = (s = '') => console.log
     const wasRunning = await daemonUp();
     await snapshotStore(VERSION, line);
     const from = linkedVersion(layout.current);
-    if (existsSync(join(layout.versions, next))) rmSync(join(layout.versions, next), { recursive: true, force: true });
+    // a re-install of the running version: move it aside first, never delete what `current` points at
+    const aside = join(layout.versions, `.${next}.replaced`);
+    rmSync(aside, { recursive: true, force: true });
+    if (existsSync(join(layout.versions, next))) renameSync(join(layout.versions, next), aside);
     renameSync(stage, join(layout.versions, next));
+    rmSync(aside, { recursive: true, force: true });
     if (from && from !== next) switchLink(layout.root, 'previous', from);
     switchLink(layout.root, 'current', next);
     line(`switched ${from || '?'} → ${next}`);
 
     const post = spawnSync(layout.launcher, ['post-install'], { stdio: 'inherit', env });
-    if (wasRunning && !(await waitFor(daemonUp, 30_000))) {
+    if (wasRunning && !(await waitFor(() => daemonRuns(next), 30_000))) {
       line(`✗ the daemon did not come back on ${next}; rolling back to ${from}`);
       if (from) {
         switchLink(layout.root, 'current', from);
@@ -143,7 +162,7 @@ async function rollback(layout, line) {
   switchLink(layout.root, 'previous', cur);
   line(`switched ${cur} → ${prev}`);
   spawnSync(layout.launcher, ['post-install'], { stdio: 'inherit' });
-  if (wasRunning && !(await waitFor(daemonUp, 30_000))) throw new Error(`the daemon did not come back on ${prev}; see: wa logs (a store snapshot is in the data dir under pre-update/)`);
+  if (wasRunning && !(await waitFor(() => daemonRuns(prev), 30_000))) throw new Error(`the daemon did not come back on ${prev}; see: wa logs (a store snapshot is in the data dir under pre-update/)`);
   line(`✓ rolled back to ${prev}`);
   return 0;
 }

@@ -21,6 +21,8 @@ jobs:
         working-directory: code/wa-bridge
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
@@ -44,6 +46,8 @@ jobs:
         working-directory: code/wa-bridge
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version-file: code/wa-bridge/.node-version
@@ -71,6 +75,8 @@ jobs:
         working-directory: code/wa-bridge
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version-file: code/wa-bridge/.node-version

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -87,6 +87,17 @@ test('daemon: a draft left "sending" by a crash is marked failed on the next sta
     if (child.exitCode === null) child.kill();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('daemon: after `wa stop` (flag present) a start exits 0 at once: stopped means stopped, also after a reboot', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wab-daemon-'));
+  try {
+    writeFileSync(join(dir, 'stopped'), 'x');
+    const env = { ...process.env, WA_BRIDGE_HOME: dir, WA_BRIDGE_PORT: String(await freePort()) };
+    const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', DAEMON], { env, stdio: 'ignore' });
+    assert.equal(await new Promise((r) => child.on('exit', r)), 0);
+    assert.equal(existsSync(join(dir, 'daemon.lock')), false, 'never got as far as the lock');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 async function waitFor(fn, timeoutMs = 15000) {

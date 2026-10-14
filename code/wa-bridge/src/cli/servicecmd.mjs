@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { call, clientConfig, ensureDaemon, stoppedFlag } from '../client.mjs';
 import { ourDaemonAnswers, pidIsDaemon } from '../lifecycle.mjs';
-import { installUnit, restartUnit, stopUnit, systemdAvailable, unitInstalled, unitStatus, UNIT_NAME } from '../service.mjs';
+import { installUnit, restartUnit, runQuiet, stopUnit, systemdAvailable, unitInstalled, unitStatus, UNIT_NAME } from '../service.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -57,7 +57,11 @@ export async function stopCommand() {
   const { paths } = clientConfig(undefined, { requireToken: false });
   writeFileSync(stoppedFlag(paths), `${new Date().toISOString()}\n`, { mode: 0o600 }); // agents' tool calls will not restart it
   let how = null;
-  if (unitInstalled() && systemdAvailable()) { stopUnit(); how = 'systemd'; }
+  if (unitInstalled() && systemdAvailable()) {
+    stopUnit();
+    runQuiet('systemctl', ['--user', 'disable', UNIT_NAME]); // and not at the next login; `wa start` re-enables
+    how = 'systemd';
+  }
   if (await answering()) { // detached, or a stray copy next to the unit
     await call('POST', '/shutdown').catch(() => {});
     how = how || 'api';
@@ -75,6 +79,7 @@ export async function restartCommand(pos, flags) {
   const { paths } = clientConfig(undefined, { requireToken: false });
   rmSync(stoppedFlag(paths), { force: true });
   if (unitInstalled() && systemdAvailable()) {
+    installUnit({ dataDir: paths.root }); // re-enables it at login after a `wa stop`
     restartUnit();
     const ok = await waitUntil(answering, 15_000);
     console.log(ok ? `restarted · systemd --user ${UNIT_NAME}` : `restart requested, but the daemon is not answering yet; see: wa logs`);

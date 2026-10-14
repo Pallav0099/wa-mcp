@@ -27,6 +27,10 @@ test('unit: runs the launcher in daemon mode, pins the data dir, restarts crashe
   assert.match(text, /^RestartPreventExitStatus=2$/m, 'a second instance is never restarted');
   assert.match(text, /^UMask=0077$/m);
   assert.match(text, /^WantedBy=default\.target$/m);
+  assert.match(text, /^StartLimitIntervalSec=300$/m, 'a permanent startup failure gives up instead of looping');
+  assert.match(text, /^StartLimitBurst=5$/m);
+  assert.doesNotMatch(text, /WA_BRIDGE_PORT/);
+  assert.match(unitText({ command: ['/l'], dataDir: '/d', port: '3999' }), /^Environment=WA_BRIDGE_PORT=3999$/m, 'a port override reaches the service');
 });
 
 test('unit: paths with spaces, % and $ are quoted and escaped for systemd', () => {

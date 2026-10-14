@@ -47,7 +47,7 @@ export async function connectCommand(pos, flags, deps = {}) {
 
   const up = await d.startDaemon(flags);
   if (up?.via === 'systemd') line(`✓ Background service running (systemd --user: ${UNIT_NAME}${up.unitCreated ? ', starts at login' : ''})`);
-  else if (up?.via === 'detached') line('✓ Running in the background (no systemd user session: after a reboot run wa start)');
+  else if (up?.via === 'detached') line(`✓ Running in the background (${flags['no-service'] ? 'not as a service' : 'no systemd user session'}: after a reboot run wa start)`);
   let h = await d.call('GET', '/health');
 
   if (h.linked) {
@@ -77,14 +77,14 @@ export async function connectCommand(pos, flags, deps = {}) {
     if (!ok) { line('Cancelled; nothing was linked.'); return 1; }
   }
 
-  let st = await d.call('POST', '/link', method === 'code' ? { method, phone: flags.code } : { method });
   let cancelled = false;
-  const stopListening = d.onInterrupt(() => {
+  const stopListening = d.onInterrupt(() => { // before POST /link: it can wait up to 30 s for the first QR
     cancelled = true;
     d.call('POST', '/link/cancel').catch(() => {}).finally(() => { line('\nCancelled; the link window is closed.'); process.exit(130); });
   });
 
   try {
+    let st = await d.call('POST', '/link', method === 'code' ? { method, phone: flags.code } : { method });
     if (method === 'code' && !d.isTTY && !flags.wait) {
       // An agent or script: hand over the code and return; the daemon keeps the window open.
       if (st.error) { line(`link failed: ${st.error}`); return 1; }

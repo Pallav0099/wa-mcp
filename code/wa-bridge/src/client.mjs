@@ -45,7 +45,7 @@ export async function ensureDaemon({ root = defaultDataDir(), timeoutMs = 15_000
     const c = clientConfig(root, { requireToken: false }); // the token appears on the daemon's first start
     if (c.token && (await ourDaemonAnswers(c.port, c.token, 500))) return { started: true, via };
   }
-  const err = new Error(`wa-bridge did not start within ${Math.round(timeoutMs / 1000)} s; see ${join(first.paths.logs, 'daemon-stderr.log')} or run: wa doctor`);
+  const err = new Error(`wa-bridge did not start within ${Math.round(timeoutMs / 1000)} s; see: wa logs (or wa doctor)`);
   err.code = 'start_failed';
   throw err;
 }

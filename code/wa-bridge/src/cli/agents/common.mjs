@@ -101,7 +101,7 @@ export function editFile(path, edit, validate) {
   validate(after);
   const bak = backup(path);
   atomicWrite(path, after);
-  return { changed: true, record: { file: path, backup: bak, created: before === null, sha256: sha256(after) } };
+  return { changed: true, record: { file: path, backup: bak, created: before === null, sha256: sha256(after), beforeSha256: before === null ? null : sha256(before) } };
 }
 
 /**

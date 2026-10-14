@@ -37,16 +37,20 @@ function unitWord(s) {
   return /^[A-Za-z0-9_\-./=:@+,%]+$/.test(esc) ? esc : `"${esc.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
-export function unitText({ command = selfCommand(), dataDir }) {
+export function unitText({ command = selfCommand(), dataDir, port = process.env.WA_BRIDGE_PORT }) {
   return [
     '# Written by wa-bridge (`wa start` / `wa connect`). Remove with: wa uninstall',
     '[Unit]',
     'Description=WA Bridge — WhatsApp gateway for AI agents',
+    // a failure that never goes away (bad config.json, port taken) stops after 5 tries instead of looping
+    'StartLimitIntervalSec=300',
+    'StartLimitBurst=5',
     '',
     '[Service]',
     'Type=simple',
     `ExecStart=${[...command, 'daemon'].map(unitWord).join(' ')}`,
     `Environment=${unitWord(`WA_BRIDGE_HOME=${dataDir}`)}`,
+    ...(port ? [`Environment=${unitWord(`WA_BRIDGE_PORT=${port}`)}`] : []),
     // crash -> restart; `wa stop` (exit 0) -> stays stopped; already running (exit 2) -> never restarted
     'Restart=on-failure',
     'RestartSec=10',
@@ -77,11 +81,13 @@ export function installUnit({ dataDir, command, run = runQuiet, env = process.en
   return { path, changed };
 }
 
+/** Stop, disable and delete the unit. The files go even when systemctl cannot reach the user manager. */
 export function uninstallUnit({ run = runQuiet, env = process.env } = {}) {
   const path = unitPath(env);
   if (!existsSync(path)) return false;
   run('systemctl', ['--user', 'disable', '--now', UNIT_NAME]);
   rmSync(path, { force: true });
+  rmSync(join(path, '..', 'default.target.wants', UNIT_NAME), { force: true });
   run('systemctl', ['--user', 'daemon-reload']);
   return true;
 }
@@ -104,13 +110,17 @@ export function lingerEnabled(run = runQuiet, user = process.env.USER) {
   return r.status === 0 ? /Linger=yes/.test(r.stdout) : null;
 }
 
-/** Spawn the daemon detached from this process. Returns its pid. */
-export function startDetached(paths, { execPath = process.execPath, env = process.env } = {}) {
+/**
+ * Spawn the daemon detached from this process. Returns its pid. Installed copies go through the launcher, so a
+ * long-running process of an older release (an MCP server) still starts the CURRENT release's daemon.
+ */
+export function startDetached(paths, { env = process.env } = {}) {
   mkdirSync(paths.logs, { recursive: true, mode: 0o700 });
   const out = openSync(join(paths.logs, 'daemon-stdout.log'), 'a', 0o600);
   const err = openSync(join(paths.logs, 'daemon-stderr.log'), 'a', 0o600);
   try {
-    const child = spawn(execPath, ['--disable-warning=ExperimentalWarning', DAEMON_SCRIPT], {
+    const [cmd, ...prefix] = selfCommand(env);
+    const child = spawn(cmd, [...prefix, 'daemon'], {
       detached: true,
       stdio: ['ignore', out, err],
       env: { ...env, WA_BRIDGE_HOME: paths.root },

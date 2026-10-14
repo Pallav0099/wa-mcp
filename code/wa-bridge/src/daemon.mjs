@@ -18,6 +18,11 @@ import { EXIT, createShutdown, installProcessHandlers, ourDaemonAnswers, pidIsDa
 if (process.platform !== 'win32') process.umask(0o077);
 
 const cfg = loadConfig();
+if (existsSync(join(cfg.paths.root, 'stopped'))) {
+  // `wa stop` means stopped until `wa start` / `wa connect`, also across logins and reboots
+  console.error('wa-bridge was stopped with `wa stop`; not starting (run: wa start)');
+  process.exit(EXIT.OK);
+}
 rotateIfLarge(join(cfg.paths.logs, 'baileys.log')); // before Baileys opens it with the first socket
 const log = createLogger(cfg.paths.logs, cfg.log.level, { echo: !!process.stdout.isTTY });
 
