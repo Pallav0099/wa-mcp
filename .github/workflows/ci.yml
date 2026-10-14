@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+        node: ['22.23.2', '24.21.0']
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: code/wa-bridge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - name: only sharp ships native code
+        run: |
+          extra=$(find node_modules -name '*.node' | grep -v '^node_modules/@img/sharp-linux-' || true)
+          if [ -n "$extra" ]; then echo "unexpected native modules:"; echo "$extra"; exit 1; fi
