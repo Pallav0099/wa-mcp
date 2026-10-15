@@ -1,7 +1,7 @@
 #!/bin/sh
 # WA Bridge installer: WhatsApp for your AI agents.
 #
-#   curl -fsSL https://github.com/xrig-io/wa-bridge/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/Pallav0099/wa-mcp/releases/latest/download/install.sh | sh
 #
 # Installs wa-bridge for the current user (no sudo) into ~/.wa-bridge and links `wa-bridge` (and `wa`, when that
 # name is free) into ~/.local/bin. It does not link WhatsApp, start a service or touch your agents: `wa connect`
@@ -23,7 +23,7 @@
 # Trusted release keys (Ed25519, raw 32 bytes, base64), space separated; the same list as TRUSTED_KEYS in
 # src/release.mjs. During a key rotation both keys are listed.
 PUBKEYS='hjEXz90rJ8GyNNoCePO3a9Usd4xGcKMxDRkZOKo71EU='
-REPO_DEFAULT='xrig-io/wa-bridge'
+REPO_DEFAULT='Pallav0099/wa-mcp'
 
 say() { printf '%s\n' "$*"; }
 warn() { printf 'wa-bridge install: %s\n' "$*" >&2; }

@@ -23,7 +23,7 @@ code.
    To start over with your own key: `node scripts/keygen.mjs <file>`, and put the printed public key into
    `TRUSTED_KEYS` and `PUBKEYS`. `scripts/build-release.mjs` refuses to build when the two lists differ, and
    `scripts/sign.mjs` refuses a key that either list lacks.
-2. **The repository name.** Downloads default to `github.com/xrig-io/wa-bridge`. If the repository lives
+2. **The repository name.** Downloads default to `github.com/Pallav0099/wa-mcp`. If the repository lives
    elsewhere, change `DEFAULT_REPO` in `src/release.mjs`, `REPO_DEFAULT` in `install/install.sh`, and the URLs in
    `README.md`. The installer has to be downloadable anonymously, so either make the repository (or a releases-only
    mirror) public, or serve the files from your own HTTPS location and use `WA_BRIDGE_DOWNLOAD_URL`.

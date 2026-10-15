@@ -5,7 +5,7 @@ can use: **Claude Code, Codex, OpenCode, Hermes Agent**, or any other MCP client
 freely. **Nothing is sent until you approve the exact preview.**
 
 ```sh
-curl -fsSL https://github.com/xrig-io/wa-bridge/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/Pallav0099/wa-mcp/releases/latest/download/install.sh | sh
 wa connect
 ```
 

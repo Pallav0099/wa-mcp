@@ -10,7 +10,7 @@
 
 import { createPublicKey, createPrivateKey, sign, verify } from 'node:crypto';
 
-export const DEFAULT_REPO = 'xrig-io/wa-bridge';
+export const DEFAULT_REPO = 'Pallav0099/wa-mcp';
 
 /** Ed25519 public keys (raw 32 bytes, base64) whose signatures are accepted. Rotate by adding the new key first. */
 export const TRUSTED_KEYS = [

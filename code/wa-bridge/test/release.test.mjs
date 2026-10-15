@@ -55,7 +55,7 @@ test('versions order like semver; pre-releases before their release', () => {
 });
 
 test('download locations: latest, a pinned version, or an explicit mirror', () => {
-  assert.equal(downloadUrl({ env: {} }), 'https://github.com/xrig-io/wa-bridge/releases/latest/download');
+  assert.equal(downloadUrl({ env: {} }), 'https://github.com/Pallav0099/wa-mcp/releases/latest/download');
   assert.equal(downloadUrl({ version: '0.3.0', env: { WA_BRIDGE_REPO: 'me/fork' } }), 'https://github.com/me/fork/releases/download/v0.3.0');
   assert.equal(downloadUrl({ version: '0.3.0', env: { WA_BRIDGE_DOWNLOAD_URL: 'http://mirror/x/' } }), 'http://mirror/x');
 });
